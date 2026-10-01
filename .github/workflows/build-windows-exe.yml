@@ -86,6 +86,10 @@ jobs:
         shell: pwsh
         run: ./Build/Build-WindowsExecutables.ps1 -RuntimeIdentifiers win-x64,win-arm64
 
+      - name: Verify actual portable executable startup and embedded payload
+        shell: powershell
+        run: ./Tests/Invoke-PortableExeSmokeTest.ps1
+
       - name: Build unsigned update artifacts for offline signing
         shell: pwsh
         run: ./Build/Create-UpdateRelease.ps1
