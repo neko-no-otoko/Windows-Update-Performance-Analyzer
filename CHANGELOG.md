@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.1.0 — 2026-10-01
+
+- Lock target feature-update identity using UpdateID/revision and available service identity; persist across reboot and exclude unrelated quality, security, driver, .NET, and other-release updates. Ambiguous identities are not selected automatically.
+- Capture informational Windows Update lifecycle XML incrementally from System and WindowsUpdateClient operational channels, with explicit query coverage and bounded final recovery.
+- Add identity-matched download/install operation intervals, missing-boundary labels, and separate post-reboot target-OS observation bounds to HTML, Summary.json, standalone JSON, and ReviewBundle.
+- Gate SetupDiag before execution against one uncontaminated target setup session; distinguish direct setup GUID attribution from target-build/time context. Skip baseline SetupDiag, and stop treating stale global SetupDiag output or general setup error tokens as automatic finalization signals.
+- Treat TiWorker/MoUsoCoreWorker and unmapped DO transfers as context rather than feature-upgrade installation; correct Caching status and use exact target build-family matching.
+- Keep UTC JSON strings stable across Windows PowerShell 5.1 and PowerShell 7.5, and preserve WUA history's documented UTC date.
+- Add mixed-update, revision/service mismatch, retry, missing-boundary, reboot-gap, unsafe XML, SetupDiag contamination, and report export regression fixtures; execute them on Windows PowerShell 5.1 in CI.
+
 ## 3.0.0 — 2026-08-28
 
 - Rebranded the product as **WUPA — Windows Update Performance Analyzer**, with a flat, trademark-distinct navy/teal/amber logo and explicit independent-project notice.

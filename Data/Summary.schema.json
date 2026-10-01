@@ -94,6 +94,24 @@
     "Recorder": {
       "type": ["object", "null"]
     },
+    "UpgradeIdentity": {
+      "type": ["object", "null"],
+      "properties": {
+        "Status": { "enum": ["Locked", "Ambiguous", "Incomplete", "NotObserved"] },
+        "UpdateID": { "$ref": "#/$defs/nullableString" },
+        "RevisionNumber": { "type": ["integer", "null"] },
+        "ServiceID": { "$ref": "#/$defs/nullableString" }
+      },
+      "additionalProperties": true
+    },
+    "UpgradeTiming": {
+      "type": ["object", "null"],
+      "properties": {
+        "Sessions": { "type": "array", "items": { "type": "object" } },
+        "TargetOsFirstObserved": { "type": ["object", "null"] }
+      },
+      "additionalProperties": true
+    },
     "ExitCode": { "enum": [0, 10, 20, 30] },
     "Device": {
       "type": "object",

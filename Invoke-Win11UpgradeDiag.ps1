@@ -17,7 +17,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$toolVersion = '3.0.0'
+$toolVersion = '3.1.0'
 $toolRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TargetVersion = '25H2'
 $OutputPath = $null
@@ -89,6 +89,7 @@ if (Test-Path -LiteralPath $bundleManifest) {
 
 try {
     Import-Module (Join-Path $toolRoot 'Modules\Common.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $toolRoot 'Modules\UpdateTracking.psm1') -Force -ErrorAction Stop
     Import-Module (Join-Path $toolRoot 'Modules\Recorder.psm1') -Force -ErrorAction Stop
     Import-Module (Join-Path $toolRoot 'Modules\Collectors.psm1') -Force -ErrorAction Stop
     Import-Module (Join-Path $toolRoot 'Modules\Analysis.psm1') -Force -ErrorAction Stop

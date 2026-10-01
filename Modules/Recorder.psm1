@@ -59,7 +59,7 @@ function Read-WudJsonLines {
     foreach ($line in @(Get-Content -LiteralPath $Path -ErrorAction Stop)) {
         $lineNumber++
         if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
-        try { $null = $records.Add(($line | ConvertFrom-Json -ErrorAction Stop)) }
+        try { $null = $records.Add((ConvertFrom-WudJsonText -Text $line)) }
         catch {
             $null = $invalidLines.Add([pscustomobject][ordered]@{
                 LineNumber = $lineNumber
@@ -127,7 +127,7 @@ function Get-WudRecorderState {
     if ([bool](Get-WudRecorderProperty $markers 'PostRollback' $false)) { return 'RolledBack' }
 
     $setup = Get-WudRecorderProperty $Sample 'Setup'
-    $processes = @(Get-WudRecorderProperty $Sample 'SetupProcesses' @())
+    $processes = @(Get-WudRecorderProperty $Sample 'SetupProcesses' @() | Where-Object { [string](Get-WudRecorderProperty $_ 'Name') -match '^(?i)(setuphost|setupprep|SetupPlatform|WindowsUpdateBox)(\.exe)?$' })
     $setupActive = @($processes).Count -gt 0 -or
         [int](Get-WudRecorderProperty $setup 'SystemSetupInProgress' 0) -eq 1 -or
         [int](Get-WudRecorderProperty $setup 'UpgradeInProgress' 0) -eq 1 -or
@@ -141,12 +141,15 @@ function Get-WudRecorderState {
         return 'SetupActive'
     }
 
+    $tracking = Get-WudRecorderProperty $Sample 'UpgradeTracking'
+    $boundaries = @(Get-WudRecorderProperty $tracking 'MatchedBoundaries' @())
+    if (@($boundaries | Where-Object Boundary -eq 'DownloadStarted').Count -gt 0) { return 'TargetUpdateDownloadObserved' }
     $delivery = Get-WudRecorderProperty $Sample 'DeliveryOptimization'
     $statusProvider = Get-WudRecorderProperty $delivery 'Status'
     if ([string](Get-WudRecorderProperty $statusProvider 'Status') -eq 'Available') {
         $records = @(Get-WudRecorderProperty $statusProvider 'Records' @())
         $active = @($records | Where-Object {
-            [string](Get-WudRecorderProperty $_ 'Status') -match '(?i)Downloading|Caching|Transferring' -or
+            [string](Get-WudRecorderProperty $_ 'Status') -match '(?i)^Downloading$|^Transferring$' -or
             ([long](Get-WudRecorderProperty $_ 'FileSize' 0) -gt 0 -and [long](Get-WudRecorderProperty $_ 'TotalBytesDownloaded' 0) -lt [long](Get-WudRecorderProperty $_ 'FileSize' 0))
         })
         if (@($active).Count -gt 0) {
@@ -158,7 +161,7 @@ function Get-WudRecorderState {
             return 'DeliveryOptimizationTransferObserved'
         }
         $complete = @($records | Where-Object {
-            [string](Get-WudRecorderProperty $_ 'Status') -match '(?i)Complete' -or
+            [string](Get-WudRecorderProperty $_ 'Status') -match '(?i)^Complete$|^Caching$' -or
             ([long](Get-WudRecorderProperty $_ 'FileSize' 0) -gt 0 -and [long](Get-WudRecorderProperty $_ 'TotalBytesDownloaded' 0) -ge [long](Get-WudRecorderProperty $_ 'FileSize' 0))
         })
         if (@($complete).Count -gt 0) { return 'DownloadObservedComplete' }
@@ -292,9 +295,10 @@ function Get-WudDeliveryOptimizationSummary {
     $firstUtc = if ($observations.Count -gt 0) { ConvertTo-WudUtcDateTime $observations[0].TimestampUtc } else { $null }
     $lastUtc = if ($observations.Count -gt 0) { ConvertTo-WudUtcDateTime $observations[$observations.Count - 1].TimestampUtc } else { $null }
     $seconds = if ($firstUtc -and $lastUtc) { [Math]::Max(0, ($lastUtc - $firstUtc).TotalSeconds) } else { 0 }
-    $activeObservation = @($observations | Where-Object { [string]$_.Status -match '(?i)Downloading|Caching|Transferring' } | Select-Object -First 1)
-    $completeObservation = @($observations | Where-Object { [string]$_.Status -match '(?i)Complete' -or ($_.FileSize -gt 0 -and $_.TotalBytes -ge $_.FileSize) } | Select-Object -First 1)
-    $sourceTotal = [long]$latestTotals.PeerBytes + [long]$latestTotals.HttpBytes + [long]$latestTotals.CacheBytes
+    $activeObservation = @($observations | Where-Object { [string]$_.Status -match '(?i)^Downloading$|^Transferring$' } | Select-Object -First 1)
+    $completeObservation = @($observations | Where-Object { [string]$_.Status -match '(?i)^Complete$|^Caching$' -or ($_.FileSize -gt 0 -and $_.TotalBytes -ge $_.FileSize) } | Select-Object -First 1)
+    # Microsoft defines BytesFromHTTP as including BytesFromCacheServer.
+    $sourceTotal = [long]$latestTotals.PeerBytes + [long]$latestTotals.HttpBytes
     $sampleIntervals = New-Object Collections.ArrayList
     for ($index = 1; $index -lt $sampleArray.Count; $index++) {
         $currentUtc = ConvertTo-WudUtcDateTime (Get-WudRecorderProperty $sampleArray[$index] 'TimestampUtc')
@@ -302,6 +306,7 @@ function Get-WudDeliveryOptimizationSummary {
         $null = $sampleIntervals.Add([int][Math]::Max(0, ($currentUtc - $priorUtc).TotalSeconds))
     }
     return [pscustomobject][ordered]@{
+        Attribution = 'DeviceWideContext'
         ObservationCount = @($observations).Count
         FirstObservedUtc = if ($firstUtc) { $firstUtc.ToString('o') } else { $null }
         LastObservedUtc = if ($lastUtc) { $lastUtc.ToString('o') } else { $null }
@@ -446,7 +451,7 @@ function Get-WudProgressSample {
         catch { $null = $sourceFiles.Add([pscustomobject][ordered]@{ Path = $sourcePath; Status = 'MetadataFailed'; Length = $null; LastWriteUtc = $null; Error = Get-WudErrorDetail -ErrorRecord $_ }) }
     }
 
-    $doProperties = @('FileId', 'FileID', 'FileSize', 'FileSizeInCache', 'TotalBytesDownloaded', 'BytesFromPeers', 'BytesFromHttp', 'BytesFromCacheServer', 'BytesFromConnectedCache', 'Status', 'DownloadDuration', 'SourceURL', 'CacheHost', 'CallerApplication', 'NumPeers', 'NumConnections')
+    $doProperties = @('FileId', 'FileID', 'UpdateID', 'UpdateGuid', 'RevisionNumber', 'FileSize', 'FileSizeInCache', 'TotalBytesDownloaded', 'BytesFromPeers', 'BytesFromHttp', 'BytesFromCacheServer', 'BytesFromConnectedCache', 'Status', 'DownloadDuration', 'SourceURL', 'CacheHost', 'CallerApplication', 'PredefinedCallerApplication', 'NumPeers', 'NumConnections')
     $peerProperties = @('IPAddress', 'PeerType', 'ConnectionType', 'BytesSent', 'BytesReceived', 'UploadRate', 'DownloadRate')
     $perfProperties = @('DownloadRatePct', 'UploadRatePct', 'DownloadRateBps', 'UploadRateBps', 'HttpConnectionCount', 'LanConnectionCount', 'GroupConnectionCount', 'InternetConnectionCount', 'CacheHostConnectionCount', 'CacheHostDownloadRateBps')
     $delivery = [pscustomobject][ordered]@{
@@ -472,7 +477,7 @@ function Get-WudProgressSample {
             UBR = Get-WudRecorderProperty $version 'UBR'
             TargetVersion = $TargetVersion
             TargetBuild = $TargetBuild
-            TargetPresent = (($version -and [string](Get-WudRecorderProperty $version 'DisplayVersion') -eq $TargetVersion) -or $build -ge $TargetBuild)
+            TargetPresent = (($version -and [string](Get-WudRecorderProperty $version 'DisplayVersion') -eq $TargetVersion) -or $build -eq $TargetBuild)
             Error = $osError
         }
         Setup = [pscustomobject]$setupValues
@@ -598,6 +603,14 @@ function Invoke-WudRecorderSample {
     $previous = @($read.Records | Select-Object -Last 1)
     $includeStatic = $ForceCheckpoint -or @($previous).Count -eq 0
     $sample = Get-WudProgressSample -RunPath $RunPath -TargetVersion $TargetVersion -TargetBuild $TargetBuild -IncludeStaticDeliveryData:$includeStatic
+    if (Get-Command Update-WudUpgradeTracking -ErrorAction SilentlyContinue) {
+        $state = Read-WudJson -Path (Join-Path $RunPath 'State/run-state.json')
+        $created = Get-WudRecorderProperty $state 'CreatedUtc'
+        $since = if ($created) { ([DateTimeOffset]::Parse($created)).UtcDateTime } else { ([DateTimeOffset]::Parse($sample.TimestampUtc)).UtcDateTime }
+        $tracking = Update-WudUpgradeTracking -RunPath $RunPath -TargetVersion $TargetVersion -SinceUtc $since
+        $sample | Add-Member -NotePropertyName UpgradeTracking -NotePropertyValue $tracking
+        $sample.RecorderState = Get-WudRecorderState -Sample $sample
+    }
     $signature = Get-WudRecorderSignature -Sample $sample -ProgressBucketSize $ProgressBucketSize
     $sample | Add-Member -NotePropertyName Signature -NotePropertyValue $signature
     $sample | Add-Member -NotePropertyName SampleReason -NotePropertyValue $Reason

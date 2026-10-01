@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $toolRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Import-Module (Join-Path $toolRoot 'Modules/Common.psm1') -Force
+Import-Module (Join-Path $toolRoot 'Modules/UpdateTracking.psm1') -Force
 Import-Module (Join-Path $toolRoot 'Modules/Recorder.psm1') -Force
 Import-Module (Join-Path $toolRoot 'Modules/Analysis.psm1') -Force
 Import-Module (Join-Path $toolRoot 'Modules/Review.psm1') -Force

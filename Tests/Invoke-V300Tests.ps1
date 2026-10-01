@@ -22,7 +22,7 @@ $settings = Get-Content -LiteralPath (Join-Path $toolRoot 'Data/settings.json') 
 $report = Get-Content -LiteralPath (Join-Path $toolRoot 'Modules/Report.psm1') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $toolRoot 'README.md') -Raw
 
-Assert-WupaV300 ($version -eq '3.0.0' -and $entry -match '\$toolVersion\s*=\s*''3\.0\.0''' -and $gui -match 'AppVersion\s*=\s*"3\.0\.0"') 'Package, engine, and GUI identify v3.0.0'
+Assert-WupaV300 ($entry -match ('\$toolVersion\s*=\s*''' + [Regex]::Escape($version) + '''') -and $gui -match ('AppVersion\s*=\s*"' + [Regex]::Escape($version) + '"')) 'Package, engine, and GUI identify the same release'
 Assert-WupaV300 ($entry -match "ValidateSet\('Start', 'Resume', 'Finish', 'Analyze', 'Cancel'\)" -and $entry -notmatch "ValidateSet\('Auto'" -and $entry -notmatch '\[string\]\$OutputPath' -and $entry -notmatch '\[string\]\$CopyTo' -and $entry -notmatch '\[string\]\$MediaPath') 'Public engine actions are reduced to the focused lifecycle'
 Assert-WupaV300 ($entry -match '\$TargetVersion = ''25H2''' -and $entry -match '\$ArmDays = 30' -and $entry -match '\$leaf = ''WUPA-') 'Target, expiry, and Public Documents case naming are fixed defaults'
 
@@ -43,6 +43,6 @@ Assert-WupaV300 ($recorder -notmatch "WindowsUpdate-ETL'; Path" -and $recorder -
 Assert-WupaV300 ($persistence -match "ProgramData 'WUPA'" -and $persistence -match "'\\WUPA\\'" -and $persistence -match '-Action Resume') 'Durable state and cross-reboot tasks use the WUPA lifecycle'
 
 Assert-WupaV300 ($report -match 'Windows Update Performance Analyzer · fact-only evidence' -and $report -match 'WUPA is an independent, diagnostic-only utility') 'Report uses the WUPA brand and factual interpretation boundary'
-Assert-WupaV300 ($readme -match 'WUPA-3\.0\.0-win-x64\.exe' -and $readme -match 'no settings page' -and $readme -match 'Windows\\Panther.*excluded') 'Operator documentation matches the simplified executable workflow and evidence safeguards'
+Assert-WupaV300 ($readme -match ('WUPA-' + [Regex]::Escape($version) + '-win-x64\.exe') -and $readme -match 'no settings page' -and $readme -match 'Windows\\Panther.*excluded') 'Operator documentation matches the simplified executable workflow and evidence safeguards'
 
 Write-Host 'All WUPA v3.0.0 regression tests passed.' -ForegroundColor Cyan

@@ -298,6 +298,7 @@ function Get-WudUpdateHistory {
                 if ($null -ne $hresult) { $hresultHex = '0x{0:X8}' -f ([long]$hresult -band 0xFFFFFFFFL) }
                 $null = $records.Add([pscustomobject][ordered]@{
                     Date                = Get-WudObjectPropertyValue $entry 'Date'
+                    DateUtc             = [DateTime]::SpecifyKind([DateTime](Get-WudObjectPropertyValue $entry 'Date'), [DateTimeKind]::Utc).ToString('o')
                     Title               = Get-WudObjectPropertyValue $entry 'Title'
                     Description         = Get-WudObjectPropertyValue $entry 'Description'
                     Operation           = [string](Get-WudObjectPropertyValue $entry 'Operation')
@@ -640,6 +641,16 @@ function Invoke-WudEventCollector {
     }
     Write-WudJsonAtomic -Path (Join-Path $path 'event-exports.json') -InputObject @($exports)
     Write-WudJsonAtomic -Path (Join-Path $path 'errors-and-warnings.json') -InputObject @($events) -Depth 10
+    # Informational WU events contain download/install boundaries. Preserve
+    # their named XML fields instead of matching localized display messages.
+    $state = Read-WudJson -Path (Join-Path $Context.RunPath 'State/run-state.json')
+    $created = Get-WudObjectPropertyValue $state 'CreatedUtc'
+    if ($created) { $start = ([DateTimeOffset]::Parse($created)).UtcDateTime }
+    $updateEvents = Get-WudUpdateEventRecords -StartTime $start -MaximumEvents 10000
+    Write-WudJsonAtomic -Path (Join-Path $path 'update-lifecycle-events.json') -InputObject $updateEvents -Depth 15
+    foreach ($provider in $updateEvents.Providers) {
+        if ($provider.Status -in @('Failed', 'Truncated')) { $null = Add-WudCollectionGap -Context $Context -Collector 'update-events' -Source $provider.Channel -Status $provider.Status -Detail ('Update lifecycle event query: ' + $provider.Error) }
+    }
 }
 
 function Get-WudSetupDiagExecutable {
@@ -734,26 +745,43 @@ function Get-WudSetupDiagExecutable {
 function Invoke-WudSetupDiagCollector {
     param($Context)
     $path = New-WudDirectory -Path (Join-Path $Context.SnapshotPath 'SetupDiag')
-    $tool = Get-WudSetupDiagExecutable -Context $Context
-    if (-not $tool) {
-        $null = Add-WudCollectionGap -Context $Context -Collector 'setupdiag' -Source 'SetupDiag.exe' -Status 'Unavailable' -Detail 'No Microsoft-signed SetupDiag executable was available.'
-        Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject ([pscustomobject]@{ Available = $false; Reason = 'No Microsoft-signed SetupDiag executable was available.' })
+    if ($Context.Mode -eq 'Preflight') {
+        Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject ([pscustomobject]@{ Executed = $false; Reason = 'Baseline only. Existing SetupDiag results and setup logs cannot describe the future monitored upgrade.' })
         return
     }
+    $history = @(Get-WudFeatureUpdateHistory -Context $Context -CurrentInventory ([pscustomobject]$Context.Inventory))
+    $Context.UpgradeTracking = Get-WudUpgradeTrackingModel -Context $Context -FeatureHistory $history
     $candidateRoots = New-Object Collections.ArrayList
+    $rejected = New-Object Collections.ArrayList
     foreach ($name in @('WindowsBT-Rollback', 'WindowsBT-Panther', 'WUPA-SetupCopyLogs', 'WindowsOld-Panther')) {
         $candidate = Join-Path (Join-Path $Context.SnapshotPath 'Raw') $name
         if (-not (Test-Path -LiteralPath $candidate)) { continue }
         $logs = @(Get-ChildItem -LiteralPath $candidate -File -Recurse -Filter 'setupact*.log' -ErrorAction SilentlyContinue)
         if (@($logs).Count -gt 0) {
+            $profiles = @($logs | ForEach-Object {
+                $profile = Get-WudSetupLogProfile -Context $Context -File $_ -Sequence 0
+                Set-WudAttemptScope -Context $Context -Attempt $profile -FeatureHistory $history -Identity $Context.Inventory['Identity']
+            })
+            # SetupDiag recursively chooses a setup log. A root containing a
+            # second, different session is unsafe even if its newest log matches.
+            if (@($profiles | Where-Object { -not $_.IncludedForUpgradeReview }).Count -gt 0 -or @($profiles.Sha256 | Select-Object -Unique).Count -ne 1) {
+                $null = $rejected.Add([pscustomobject]@{ Path = $candidate; Reason = 'Not all recursive setupact inputs belong to one validated target session.'; Profiles = $profiles })
+                continue
+            }
             $newest = @($logs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)[0]
-            $null = $candidateRoots.Add([pscustomobject]@{ Path = $candidate; NewestUtc = $newest.LastWriteTimeUtc; SetupAct = $newest.FullName })
+            $null = $candidateRoots.Add([pscustomobject]@{ Path = $candidate; NewestUtc = $newest.LastWriteTimeUtc; SetupAct = $newest.FullName; Profile = $profiles[0] })
         }
     }
     $selectedInput = @($candidateRoots | Sort-Object NewestUtc -Descending | Select-Object -First 1)
     if (@($selectedInput).Count -eq 0) {
-        $null = Add-WudCollectionGap -Context $Context -Collector 'setupdiag' -Source 'Scoped feature-upgrade setup logs' -Status 'NoScopedInput' -Detail 'No setupact log was available in WindowsBT, rollback, copied setup-hook, or Windows.old upgrade locations. Windows\\Panther imaging evidence was intentionally excluded.'
-        Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject ([pscustomobject]@{ Available = $true; Tool = $tool; Executed = $false; Reason = 'No scoped feature-upgrade input.' })
+        $null = Add-WudCollectionGap -Context $Context -Collector 'setupdiag' -Source 'Scoped feature-upgrade setup logs' -Status 'NoScopedInput' -Detail 'No uncontaminated setup session passed target identity, target build, ownership, and window gates. SetupDiag was not run against unrelated or ambiguous logs.'
+        Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject ([pscustomobject]@{ Executed = $false; Reason = 'No identity-scoped feature-upgrade input.'; Identity = $Context.UpgradeTracking.Identity; RejectedInputs = @($rejected) }) -Depth 30
+        return
+    }
+    $tool = Get-WudSetupDiagExecutable -Context $Context
+    if (-not $tool) {
+        $null = Add-WudCollectionGap -Context $Context -Collector 'setupdiag' -Source 'SetupDiag.exe' -Status 'Unavailable' -Detail 'No Microsoft-signed SetupDiag executable was available.'
+        Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject ([pscustomobject]@{ Available = $false; Executed = $false; Reason = 'No Microsoft-signed SetupDiag executable was available.' })
         return
     }
     $inputMetadata = [pscustomobject][ordered]@{
@@ -762,9 +790,13 @@ function Invoke-WudSetupDiagCollector {
         Executed           = $true
         InputPath          = $selectedInput[0].Path
         InputSetupAct      = $selectedInput[0].SetupAct
-        InputEvidenceRef   = Get-WudRelativePath -BasePath $Context.EvidencePath -Path $selectedInput[0].SetupAct
+        InputEvidenceRef   = (Get-WudRelativePath -BasePath $Context.EvidencePath -Path $selectedInput[0].SetupAct).Replace('\', '/')
+        InputUpdateID      = $Context.UpgradeTracking.Identity.UpdateID
+        InputRevisionNumber = $Context.UpgradeTracking.Identity.RevisionNumber
+        InputTargetBuild   = $selectedInput[0].Profile.TargetBuild
+        InputAttributionBasis = $selectedInput[0].Profile.AttributionBasis
         ExcludedByDesign   = @('Windows\\Panther', 'Commands', 'CurrentDiagnostics', 'Compatibility\\MediaScan')
-        ScopingNote        = 'SetupDiag input is restricted to the newest feature-upgrade-style raw source. Final Windows Update eligibility is decided separately by the fact-only scope gates.'
+        ScopingNote        = 'Every recursive setupact input passed target identity/build/window gates and is byte-identical to the selected session. Bounded time association remains context rather than direct GUID attribution.'
     }
     Write-WudJsonAtomic -Path (Join-Path $path 'setupdiag-tool.json') -InputObject $inputMetadata
     $output = Join-Path $path 'SetupDiagResults.json'

@@ -43,11 +43,16 @@ jobs:
           $tests = @(
             './Tests/Invoke-V200Tests.ps1',
             './Tests/Invoke-V300Tests.ps1'
+            './Tests/Invoke-UpgradeIdentityTests.ps1'
           )
           foreach ($test in $tests) {
             & pwsh -NoProfile -File $test
             if ($LASTEXITCODE -ne 0) { throw "Regression test failed: $test (exit $LASTEXITCODE)" }
           }
+
+      - name: Validate upgrade identity and timing on Windows PowerShell 5.1
+        shell: powershell
+        run: ./Tests/Invoke-UpgradeIdentityTests.ps1
 
       - name: Publish x64 and ARM64 single-file applications
         shell: pwsh
@@ -55,7 +60,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WUPA-3.0.0
+          name: WUPA-3.1.0
           path: |
             dist/*.exe
             dist/*.json

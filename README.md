@@ -7,8 +7,8 @@ Windows Update Performance Analyzer is a focused, read-only Windows 11 25H2 upda
 ## Use it
 
 1. Download the one-file executable for the computer:
-   - `WUPA-3.0.0-win-x64.exe` for most Windows PCs.
-   - `WUPA-3.0.0-win-arm64.exe` for Windows on ARM.
+   - `WUPA-3.1.0-win-x64.exe` for most Windows PCs.
+   - `WUPA-3.1.0-win-arm64.exe` for Windows on ARM.
 2. Run the executable and approve UAC.
 3. Select **Start tracking the 25H2 update** before the update is offered or installed.
 4. Wait for **Ready for the 25H2 update**. You can then close WUPA.
@@ -52,6 +52,18 @@ WUPA retains evidence needed to reconstruct Windows Update download, install, re
 Broad software, package, feature, general hardware, MDM, ConfigMgr, WER, SetupAPI, CBS, DISM, reliability-history, network-inventory, and full-dump sweeps are excluded from the default profile.
 
 `Windows\Panther` is also excluded. That location commonly contains deployment or imaging setup activity and is not trusted as feature-update evidence. Setup parsing is restricted to `$WINDOWS.~BT`, rollback, setup-hook copies, and `Windows.old` upgrade evidence, with source, build, time, and contamination gates recorded in the report.
+
+## Upgrade identity and timing
+
+WUPA 3.1 locks the actual target feature update's **UpdateID GUID and revision**, retaining the service identity when exposed. It discovers them from named Windows Update event fields and installation history. There is no hard-coded GUID for every 25H2 deployment. Cumulative, security, driver, .NET, Defender, and other-release updates remain context even when their titles mention 25H2. Unknown/localized titles are not guessed. Multiple target identities are marked ambiguous, missing revision metadata is marked incomplete, and a later update cannot replace an existing lock.
+
+The report's phase table uses matching Windows Update informational events for download start/completion and install start/result. Repeated operation starts have separate records. Missing starts or ends stay unknown; elapsed times include waits and pauses. The first observed target OS after reboot is a separate boundary with actual observation bounds, which may exceed 60 seconds across reboot. Windows Update history dates do not establish download or install start times.
+
+Delivery Optimization FileId identifies a payload file, not the upgrade. Its device-wide counters are labeled context; only an explicit UpdateID mapping can contribute a target download observation. SetupDiag runs after collection only when all recursive setupact inputs describe one validated target session. Logs linked only by target build and an installation window retain `ContextOnly` attribution; stale/global SetupDiag results cannot automatically finish monitoring.
+
+See Microsoft's [update identifier documentation](https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs), [SetupDiag offline input behavior](https://learn.microsoft.com/en-us/windows/deployment/upgrade/setupdiag), and [Delivery Optimization status fields](https://learn.microsoft.com/en-us/windows/deployment/do/waas-delivery-optimization-monitor).
+
+For full live capture, cancel or finish an existing 3.0 monitoring run and start a new run with 3.1 before the upgrade. Opening a newer executable does not replace already-running scheduled-task code. After-the-fact analysis can only recover events Windows retained.
 
 ## Results
 

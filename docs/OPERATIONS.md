@@ -2,7 +2,7 @@
 
 ## Normal workflow
 
-1. Run the architecture-appropriate `WUPA-3.0.0-win-*.exe` as an administrator.
+1. Run the architecture-appropriate `WUPA-3.1.0-win-*.exe` as an administrator.
 2. Select **Start tracking the 25H2 update**.
 3. Do not begin the update until the app says **Ready for the 25H2 update**.
 4. Close the app if desired and run the update through the organization's existing system.
@@ -25,7 +25,7 @@ WUPA never starts the Windows upgrade.
 
 - Active pointer: `%ProgramData%\WUPA\ActiveRun.json`
 - Durable run: `%ProgramData%\WUPA\Runs\<RunId>`
-- Extracted runtime: `%ProgramData%\WUPA\Runtime\3.0.0`
+- Extracted runtime: `%ProgramData%\WUPA\Runtime\3.1.0`
 - Scheduled tasks: `\WUPA\Resume-<RunId>` and `\WUPA\Recorder-<RunId>`
 - Final output: `%PUBLIC%\Documents\WUPA-<Computer>-<RunId>`
 - Early startup log: `%PUBLIC%\Documents\WUPA-Launcher.log`

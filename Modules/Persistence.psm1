@@ -458,7 +458,7 @@ function Install-WudPersistence {
         TargetVersion     = $Context.TargetVersion
         TargetBuild       = $Context.Target.buildFamily
         CopyTo            = $Context.CopyTo
-        CreatedUtc        = [DateTime]::UtcNow.ToString('o')
+        CreatedUtc        = $Context.StartedUtc
         ExpiresUtc        = [DateTime]::UtcNow.AddDays($Context.ArmDays).ToString('o')
         Status            = 'Armed'
         BaselineIdentity  = $identity
@@ -509,50 +509,39 @@ function Get-WudResumeSignal {
     $identity = Get-WudLightOsIdentity
     $signals = New-Object Collections.ArrayList
     $providerResults = New-Object Collections.ArrayList
+    $upgradeIdentity = Read-WudJson -Path (Join-Path $State.RunPath 'State/upgrade-identity.json')
     $markers = @(
         @{ Kind = 'PostOOBE marker'; Path = (Join-Path $State.RunPath 'State\Markers\post-oobe.marker') },
         @{ Kind = 'PostRollback marker'; Path = (Join-Path $State.RunPath 'State\Markers\post-rollback.marker') }
     )
     foreach ($marker in $markers) {
-        if (Test-Path -LiteralPath $marker.Path) { $null = $signals.Add([pscustomobject]@{ Kind = $marker.Kind; Source = $marker.Path; TimestampUtc = (Get-Item -LiteralPath $marker.Path).LastWriteTimeUtc.ToString('o') }) }
+        if ((Get-WudObjectPropertyValue $upgradeIdentity 'Status') -eq 'Locked' -and (Test-Path -LiteralPath $marker.Path)) {
+            $item = Get-Item -LiteralPath $marker.Path
+            if ($item.LastWriteTimeUtc -ge $createdUtc) { $null = $signals.Add([pscustomobject]@{ Kind = $marker.Kind; Source = $marker.Path; TimestampUtc = $item.LastWriteTimeUtc.ToString('o') }) }
+        }
     }
-    if ([string]$identity.DisplayVersion -eq [string]$State.TargetVersion -or [int]$identity.CurrentBuild -ge [int]$State.TargetBuild) {
+    if ([string]$identity.DisplayVersion -eq [string]$State.TargetVersion -or [int]$identity.CurrentBuild -eq [int]$State.TargetBuild) {
         $null = $signals.Add([pscustomobject]@{ Kind = 'Target build reached'; Source = 'Current OS identity'; TimestampUtc = $identity.CapturedUtc })
     }
-    foreach ($candidate in @(
-        [pscustomobject]@{ Kind = 'Rollback evidence'; Path = (Join-Path $env:SystemDrive '$WINDOWS.~BT\Sources\Rollback\setupact.log'); TerminalByLocation = $true },
-        [pscustomobject]@{ Kind = 'Setup terminal evidence'; Path = (Join-Path $env:SystemDrive '$WINDOWS.~BT\Sources\Panther\setuperr.log'); TerminalByLocation = $false },
-        [pscustomobject]@{ Kind = 'SetupDiag result'; Path = (Join-Path $env:SystemRoot 'Logs\SetupDiag\SetupDiagResults.xml'); TerminalByLocation = $false }
-    )) {
-        if (-not (Test-Path -LiteralPath $candidate.Path)) { continue }
-        try {
-            $item = Get-Item -LiteralPath $candidate.Path -ErrorAction Stop
-            if ($item.LastWriteTimeUtc -le $createdUtc) { continue }
-            $terminal = [bool]$candidate.TerminalByLocation
-            if (-not $terminal) {
-                $stream = Open-WudFileReadStream -Path $candidate.Path
-                try {
-                    $readLength = [int][Math]::Min([long]$stream.Length, 1048576L)
-                    if ($stream.Length -gt $readLength) { $null = $stream.Seek(-$readLength, [IO.SeekOrigin]::End) }
-                    [byte[]]$bytes = New-Object byte[] $readLength
-                    $actual = $stream.Read($bytes, 0, $readLength)
-                    $text = (New-Object Text.UTF8Encoding($false, $false)).GetString($bytes, 0, $actual)
-                    $terminal = $text -match '(?i)0xC1900[12][0-9A-F]{3}|Matching Profile found|FailureData|SetupDiag.*(?:failure|rollback)|MOSETUP_E_|SetupPlatform.*(?:failed|failure)'
-                }
-                finally { $stream.Dispose() }
-            }
-            if ($terminal) { $null = $signals.Add([pscustomobject]@{ Kind = $candidate.Kind; Source = $candidate.Path; TimestampUtc = $item.LastWriteTimeUtc.ToString('o') }) }
-        }
-        catch { $null = $providerResults.Add([pscustomobject]@{ Provider = 'TerminalEvidenceProbe'; Source = $candidate.Path; Status = 'Failed'; Error = Get-WudErrorDetail -ErrorRecord $_ }) }
-    }
+    # Global/stale SetupDiag results and unscoped error tokens cannot finish a
+    # monitored case. Require a fresh terminal result for its locked identity.
     try {
         $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
         $count = $searcher.GetTotalHistoryCount()
-        $targetTitlePattern = '(?i)(?:Feature update|Windows 11).*' + [Regex]::Escape([string]$State.TargetVersion)
-        foreach ($entry in @($searcher.QueryHistory(0, [Math]::Min($count, 500)))) {
-            if ($entry.Date.ToUniversalTime() -le $createdUtc) { continue }
-            if ([string]$entry.Title -match $targetTitlePattern -and [int]$entry.ResultCode -in @(4, 5)) {
-                $null = $signals.Add([pscustomobject]@{ Kind = 'Windows Update terminal result'; Source = 'Microsoft.Update.Session history'; TimestampUtc = $entry.Date.ToUniversalTime().ToString('o'); ResultCode = [int]$entry.ResultCode; HResult = $entry.HResult; Title = $entry.Title })
+        $history = New-Object Collections.ArrayList
+        if ($count -gt 0) { foreach ($entry in @($searcher.QueryHistory(0, [Math]::Min($count, 500)))) {
+            $date = [DateTime]::SpecifyKind([DateTime]$entry.Date, [DateTimeKind]::Utc)
+            if ($date -le $createdUtc -or [int]$entry.Operation -ne 1) { continue }
+            $null = $history.Add([pscustomobject]@{ DateUtc = $date.ToString('o'); Title = $entry.Title; UpdateID = $entry.UpdateIdentity.UpdateID; RevisionNumber = $entry.UpdateIdentity.RevisionNumber; ServiceID = $entry.ServiceID; ResultCode = [int]$entry.ResultCode; HResult = $entry.HResult })
+        } }
+        $upgradeIdentity = Resolve-WudUpgradeIdentity -Records @($history) -TargetVersion $State.TargetVersion -ExistingLock $upgradeIdentity
+        if ($upgradeIdentity.Status -eq 'Locked') { Write-WudJsonAtomic -Path (Join-Path $State.RunPath 'State/upgrade-identity.json') -InputObject $upgradeIdentity -Depth 15 }
+        $latest = @($history | Where-Object { Test-WudUpgradeIdentityMatch $_ $upgradeIdentity } | Sort-Object DateUtc -Descending | Select-Object -First 1)
+        $recordedEvents = @((Read-WudJsonLines -Path (Join-Path $State.RunPath 'Evidence/Recorder/UpdateEvents.jsonl')).Records | Where-Object { Test-WudUpgradeIdentityMatch $_ $upgradeIdentity } | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
+        foreach ($entry in $latest) {
+            if ($recordedEvents.Count -gt 0 -and $recordedEvents[0].Boundary -in @('DownloadStarted', 'InstallStarted') -and ([DateTimeOffset]::Parse($recordedEvents[0].TimestampUtc)) -gt ([DateTimeOffset]::Parse($entry.DateUtc))) { continue }
+            if ((Test-WudUpgradeIdentityMatch $entry $upgradeIdentity) -and $entry.ResultCode -in @(4, 5)) {
+                $null = $signals.Add([pscustomobject]@{ Kind = 'Windows Update terminal result'; Source = 'Microsoft.Update.Session history'; TimestampUtc = $entry.DateUtc; ResultCode = $entry.ResultCode; HResult = $entry.HResult; Title = $entry.Title; UpdateID = $entry.UpdateID; RevisionNumber = $entry.RevisionNumber })
             }
         }
         $null = $providerResults.Add([pscustomobject]@{ Provider = 'Microsoft.Update.Session history'; Source = 'WUA COM history'; Status = 'Available'; Error = $null })

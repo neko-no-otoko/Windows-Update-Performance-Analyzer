@@ -64,13 +64,22 @@ function New-WudDirectory {
 function Read-WudJson {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    return (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json)
+    return ConvertFrom-WudJsonText -Text (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop)
+}
+
+function ConvertFrom-WudJsonText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    # PowerShell 7.5 otherwise turns UTC JSON strings into DateTime objects.
+    # String coercion then loses their offset when older PS5-compatible code
+    # calls DateTimeOffset.Parse. Keep the PS5 wire behavior on both runtimes.
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { return $Text | ConvertFrom-Json -DateKind String -ErrorAction Stop }
+    return $Text | ConvertFrom-Json -ErrorAction Stop
 }
 
 function Write-WudJsonAtomic {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)]$InputObject,
+        [Parameter(Mandatory = $true)][AllowNull()]$InputObject,
         [int]$Depth = 30
     )
     $parent = Split-Path -Parent $Path
@@ -212,6 +221,8 @@ function New-WudRunContext {
         CollectionComplete = $true
         LastCopyResult     = $null
         ReviewData         = $null
+        UpgradeTracking    = $null
+        UpgradeTiming      = $null
         ReviewBundle       = $null
         Recorder            = $null
         StatusModel        = [pscustomobject][ordered]@{
@@ -801,7 +812,7 @@ function Resolve-WudExitCode {
 Export-ModuleMember -Function @(
     'Test-WudIsWindows', 'Test-WudAdministrator', 'Test-WudInteractiveUser', 'Get-WudCurrentUserSid',
     'Get-WudPublicDocumentsPath',
-    'New-WudDirectory', 'Read-WudJson', 'Write-WudJsonAtomic', 'Write-WudText', 'Get-WudTargetDefinition',
+    'New-WudDirectory', 'Read-WudJson', 'ConvertFrom-WudJsonText', 'Write-WudJsonAtomic', 'Write-WudText', 'Get-WudTargetDefinition',
     'New-WudRunContext', 'Write-WudLog', 'Invoke-WudProcess', 'Invoke-WudCollector', 'Add-WudFinding',
     'Add-WudTimelineEvent', 'Get-WudRelativePath', 'Get-WudFileHashSafe', 'Get-WudFileInventory',
     'ConvertTo-WudExtendedLengthPath', 'ConvertFrom-WudExtendedLengthPath', 'Get-WudFileTreeSafe', 'Open-WudFileReadStream',

@@ -17,6 +17,7 @@ $toolRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exitCode = 40
 try {
     Import-Module (Join-Path $toolRoot 'Modules\Common.psm1') -Force -ErrorAction Stop
+    Import-Module (Join-Path $toolRoot 'Modules\UpdateTracking.psm1') -Force -ErrorAction Stop
     Import-Module (Join-Path $toolRoot 'Modules\Recorder.psm1') -Force -ErrorAction Stop
     $exitCode = Start-WudProgressRecorder -RunPath $RunPath -TargetVersion $TargetVersion -TargetBuild $TargetBuild -IntervalSeconds $IntervalSeconds -ProgressBucketSize $ProgressBucketSize -MaximumCheckpoints $MaximumCheckpoints -MaximumCheckpointFileBytes $MaximumCheckpointFileBytes -MaximumCheckpointBytes $MaximumCheckpointBytes -Once:$Once
 }

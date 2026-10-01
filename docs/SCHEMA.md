@@ -17,6 +17,8 @@ Core properties are:
 | `Outcome` | Human-readable banner derived from the explicit status fields; never `Unknown`. |
 | `StatusModel` | Separate `CurrentOsState`, `BuildTransition`, `AttemptOutcome`, and `DeploymentSource` values. |
 | `Recorder` | Sampling window, state boundaries, and Delivery Optimization observation rollups. |
+| `UpgradeIdentity` | `Locked`, `Ambiguous`, `Incomplete`, or `NotObserved`; target UpdateID GUID/revision, available service identity, discovery evidence, and candidates. |
+| `UpgradeTiming` | Identity-matched operation sessions with source-event start/end, missing-boundary labels, elapsed seconds, and separate target-OS observation bounds. |
 | `Facts`, `FactCounts` | Direct records and rollups by fact type and scope. |
 | `Attempts`, `AttemptScope` | Setup candidates, exact gates, classifications, and validated/excluded counts. |
 | `ExcludedEvidence` | Candidate evidence prevented from entering upgrade conclusions and the exact reason. |
@@ -25,6 +27,10 @@ Core properties are:
 | `PrimaryFinding`, `Findings`, `FindingCounts` | Compatibility fields retained for 1.x consumers. They are `null`/empty/zero in fact-only mode. |
 
 V2 can emit `Monitoring Armed`, `Target OS Present`, `Upgrade In Progress`, `Upgrade Succeeded`, `Rolled Back`, `Failed`, or `No Upgrade Outcome Observed`. Compatibility values `Ready`, `Attention Required`, and `Blocked` remain accepted by the schema. A banner is not deployment provenance; use `StatusModel.DeploymentSource` for that question.
+
+3.1 adds optional `UpgradeIdentity` and `UpgradeTiming` fields without changing the existing numeric schema. The same objects are exported as standalone JSON and in the review bundle. `TargetUpdateEvents.jsonl` contains matching lifecycle XML/fields; `UpdateEvents.jsonl` retains all sampled WU events as context. `UpdateEventCoverage.jsonl` records per-channel query failures/truncation. Native EVTX is retained independently. `Timeline.csv` adds `UpdateID`, `RevisionNumber`, `ScopeStatus`, and `TimingKind`; older timeline rows may leave these fields empty.
+
+Timing sessions separate each source start and terminal boundary. Missing start/end/duration is `null`, never zero. `SourceEvent` means a provider timestamp; `ObservationBound` means the true transition falls between observations, not that either timestamp is the exact transition. `InstallReportedSucceeded` is the WUA applied-operation result; post-reboot target presence is `TargetOsFirstObserved`. `TargetBuildAndIdentityInstallWindow` setup attribution is context only, while `ExplicitSetupUpdateId` has a direct GUID link. DO FileId/URLs alone never link a transfer to the target update.
 
 The status dimensions are:
 
