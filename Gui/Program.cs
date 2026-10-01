@@ -142,10 +142,10 @@ internal sealed class MainForm : Form
         _cancel.LinkColor = Color.FromArgb(146, 67, 42);
         _cancel.Dock = DockStyle.Top;
         _cancel.Visible = false;
-        _analyze.Click += async (_, _) => await RunActionAsync("Analyze");
-        _openReport.Click += (_, _) => OpenLatestReport();
-        _openFolder.Click += (_, _) => OpenBestFolder();
-        _cancel.Click += async (_, _) => await ConfirmCancelAsync();
+        _analyze.LinkClicked += async (_, _) => await RunActionAsync("Analyze");
+        _openReport.LinkClicked += (_, _) => OpenLatestReport();
+        _openFolder.LinkClicked += (_, _) => OpenBestFolder();
+        _cancel.LinkClicked += async (_, _) => await ConfirmCancelAsync();
         _content.Controls.Add(_analyze);
         _content.Controls.Add(_cancel);
         _reportLinks.Dock = DockStyle.Top;
@@ -170,7 +170,7 @@ internal sealed class MainForm : Form
         ConfigureLink(_trackingFiles, "Open tracking files (ProgramData)");
         _trackingFiles.Dock = DockStyle.Top;
         _trackingFiles.Visible = false;
-        _trackingFiles.Click += (_, _) => { var active = ActiveRunInfo.TryRead(); if (active is not null && Directory.Exists(active.RunPath)) OpenPath(active.RunPath); };
+        _trackingFiles.LinkClicked += (_, _) => { var active = ActiveRunInfo.TryRead(); if (active is not null && Directory.Exists(active.RunPath)) OpenPath(active.RunPath); };
         var technical = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
         technical.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         technical.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -179,7 +179,7 @@ internal sealed class MainForm : Form
         _detailsPanel.Controls.Add(technical);
         ConfigureLink(_details, "Show collector log");
         _details.Dock = DockStyle.Top;
-        _details.Click += (_, _) => ToggleDetails();
+        _details.LinkClicked += (_, _) => ToggleDetails();
         _content.Controls.Add(_details);
         _content.Controls.Add(_detailsPanel);
         _content.Controls.Add(new Label { Text = "Collects evidence only. Does not install updates or make repairs.", Dock = DockStyle.Top, AutoSize = true, ForeColor = Color.FromArgb(92, 100, 112), Margin = new Padding(0, 16, 0, 0) });
@@ -203,17 +203,21 @@ internal sealed class MainForm : Form
         _layingOut = true;
         try
         {
-        var gutter = LogicalToDeviceUnits(24);
-        var width = Math.Max(1, Math.Min(LogicalToDeviceUnits(920), _viewport.ClientSize.Width - gutter * 2));
-        _content.MinimumSize = _content.MaximumSize = new Size(width, 0);
-        _content.Width = width;
-        var textWidth = Math.Max(1, width - LogicalToDeviceUnits(40));
-        foreach (var label in _title.Controls.OfType<Label>()) label.MaximumSize = new Size(Math.Max(1, width - LogicalToDeviceUnits(118)), 0);
-        _status.MaximumSize = _statusDetail.MaximumSize = _stage.MaximumSize = new Size(textWidth, 0);
-        _analyze.MaximumSize = _cancel.MaximumSize = new Size(width, 0);
-        _detailsPanel.Height = Math.Max(LogicalToDeviceUnits(220), Math.Min(LogicalToDeviceUnits(420), _viewport.ClientSize.Height - LogicalToDeviceUnits(460)));
-        _content.Location = new Point(Math.Max(gutter, (_viewport.ClientSize.Width - width) / 2), gutter + _viewport.AutoScrollPosition.Y);
-        _content.PerformLayout();
+            var gutter = LogicalToDeviceUnits(24);
+            var width = Math.Max(1, Math.Min(LogicalToDeviceUnits(920), _viewport.ClientSize.Width - gutter * 2));
+            _content.MinimumSize = _content.MaximumSize = new Size(width, 0);
+            _content.Width = width;
+            var textWidth = Math.Max(1, width - LogicalToDeviceUnits(40));
+            foreach (var label in _title.Controls.OfType<Label>()) label.MaximumSize = new Size(Math.Max(1, width - LogicalToDeviceUnits(118)), 0);
+            _status.MaximumSize = _statusDetail.MaximumSize = _stage.MaximumSize = new Size(textWidth, 0);
+            _analyze.MaximumSize = _cancel.MaximumSize = new Size(width, 0);
+            var logHeight = Math.Max(LogicalToDeviceUnits(220), Math.Min(LogicalToDeviceUnits(420), _viewport.ClientSize.Height - LogicalToDeviceUnits(460)));
+            _detailsPanel.MinimumSize = new Size(0, logHeight);
+            _detailsPanel.Height = logHeight;
+            _content.Location = new Point(Math.Max(gutter, (_viewport.ClientSize.Width - width) / 2), gutter + _viewport.AutoScrollPosition.Y);
+            _content.PerformLayout();
+            _viewport.AutoScrollMinSize = new Size(0, _content.Height + gutter * 2);
+            _viewport.PerformLayout();
         }
         finally { _layingOut = false; }
     }

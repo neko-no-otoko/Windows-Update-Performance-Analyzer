@@ -7,6 +7,7 @@ namespace Wupa;
 internal static class GuiLayoutTests
 {
     private static readonly List<string> Checks = new();
+    private static readonly List<object> Snapshots = new();
 
     [STAThread]
     private static int Main(string[] args)
@@ -32,20 +33,27 @@ internal static class GuiLayoutTests
                 foreach (var size in new[] { new Size(740, 600), new Size(860, 640), new Size(1920, 1080) })
                 {
                     form.WindowState = FormWindowState.Normal;
+                    // CI's desktop may be 1024x768. Override native maximum
+                    // tracking size only in the harness so the wide window is
+                    // actually rendered, not silently clamped by the desktop.
+                    form.MaximumSize = new Size(4096, 2160);
                     form.ClientSize = size;
                     Settle(form);
+                    Assert(form.Width >= size.Width && form.Height >= size.Height, state + ": requested snapshot size was not clamped");
                     ValidateLayout(form, state + "-" + size.Width);
                     Save(form, output, state + "-" + size.Width);
                 }
                 var bounds = form.Bounds;
-                form.ToggleDetails(); Settle(form);
+                ActivateDetails(form); Settle(form);
+                Assert(Field<TextBox>(form, "_log").Height >= 150, state + ": expanded log has usable height");
                 Assert(form.Bounds == bounds, state + ": log toggle does not resize the window");
                 ValidateLayout(form, state + "-log-open");
                 Save(form, output, state + "-log-open");
-                form.ToggleDetails(); Settle(form);
+                ActivateDetails(form); Settle(form);
+                form.MaximumSize = Size.Empty;
                 form.WindowState = FormWindowState.Maximized; Settle(form);
                 bounds = form.Bounds;
-                form.ToggleDetails(); Settle(form);
+                ActivateDetails(form); Settle(form);
                 Assert(form.WindowState == FormWindowState.Maximized && form.Bounds == bounds, state + ": log toggle preserves maximized state and bounds");
                 ValidateLayout(form, state + "-maximized");
                 Save(form, output, state + "-maximized");
@@ -66,7 +74,7 @@ internal static class GuiLayoutTests
                 Save(form, output, "large-text-" + scale.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 form.Close();
             }
-            File.WriteAllText(Path.Combine(output, "Validation.json"), JsonSerializer.Serialize(new { Passed = true, Checks, Scope = "Native WinForms fixture rendering and layout; no collectors, runtime extraction, tasks or upgrade actions executed. Large-text cases are not real monitor-DPI validation." }, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(Path.Combine(output, "Validation.json"), JsonSerializer.Serialize(new { Passed = true, Checks, Snapshots, Scope = "Native WinForms fixture rendering and layout; no collectors, runtime extraction, tasks or upgrade actions executed. Large-text cases are not real monitor-DPI validation." }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine($"PASS: {Checks.Count} native GUI layout/state checks; snapshots in {output}");
             return 0;
         }
@@ -105,6 +113,7 @@ internal static class GuiLayoutTests
     {
         var content = Field<TableLayoutPanel>(form, "_content");
         var viewport = Field<Panel>(form, "_viewport");
+        Assert(!viewport.HorizontalScroll.Visible, name + ": no unnecessary horizontal page scrollbar");
         Assert(content.Width <= (int)Math.Ceiling(920 * form.DeviceDpi / 96D), name + ": content width is bounded");
         Assert(Math.Abs(content.Left - (viewport.ClientSize.Width - content.Width) / 2) <= 2, name + ": content stays centered");
         foreach (var control in Descendants(content).Where(c => c.Visible && c.Parent is not null))
@@ -122,6 +131,7 @@ internal static class GuiLayoutTests
     private static IEnumerable<Control> Descendants(Control parent) { foreach (Control child in parent.Controls) { yield return child; foreach (var nested in Descendants(child)) yield return nested; } }
     private static T Field<T>(MainForm form, string name) where T : Control => (T)(typeof(MainForm).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(form) ?? throw new Exception("Missing control " + name));
     private static void Settle(MainForm form) { form.PerformLayout(); Application.DoEvents(); form.PerformLayout(); Application.DoEvents(); }
-    private static void Save(MainForm form, string output, string name) { using var bitmap = new Bitmap(form.Width, form.Height); form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(output, name + ".png"), ImageFormat.Png); }
+    private static void ActivateDetails(MainForm form) { var link = Field<LinkLabel>(form, "_details"); typeof(LinkLabel).GetMethod("OnLinkClicked", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(link, new object[] { new LinkLabelLinkClickedEventArgs(link.Links[0]) }); }
+    private static void Save(MainForm form, string output, string name) { using var bitmap = new Bitmap(form.Width, form.Height); form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(output, name + ".png"), ImageFormat.Png); Snapshots.Add(new { Name = name, Width = form.Width, Height = form.Height, ClientWidth = form.ClientSize.Width, ClientHeight = form.ClientSize.Height, Dpi = form.DeviceDpi }); }
     private static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); Checks.Add(message); }
 }

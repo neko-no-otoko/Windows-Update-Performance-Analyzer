@@ -72,6 +72,18 @@ jobs:
           path: gui-layout-results/
           if-no-files-found: warn
 
+      - name: Build portable GUI validation harness for Windows VM checks
+        shell: pwsh
+        run: |
+          dotnet publish ./Tests/Gui.LayoutTests/Gui.LayoutTests.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false --output ./gui-vm-harness
+          if ($LASTEXITCODE -ne 0) { throw 'GUI VM harness build failed.' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WUPA-GUI-VM-harness
+          path: gui-vm-harness/Gui.LayoutTests.exe
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: WUPA-3.1.1
