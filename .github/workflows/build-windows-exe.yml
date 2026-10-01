@@ -55,11 +55,11 @@ jobs:
       - name: Validate upgrade identity and timing on Windows PowerShell 5.1
         shell: powershell
         run: |
-          ./Tests/Invoke-UpgradeIdentityTests.ps1
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-UpgradeIdentityTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 identity fixtures failed.' }
-          ./Tests/Invoke-V320ReportTests.ps1
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320ReportTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 real collector/export fixtures failed.' }
-          ./Tests/Invoke-V320MigrationTests.ps1
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 migration fixtures failed.' }
 
       - name: Validate updater integrity and failure scenarios
