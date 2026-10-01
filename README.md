@@ -7,8 +7,8 @@ Windows Update Performance Analyzer is a focused, read-only Windows 11 25H2 upda
 ## Use it
 
 1. Download the one-file executable for the computer:
-   - `WUPA-3.1.1-win-x64.exe` for most Windows PCs.
-   - `WUPA-3.1.1-win-arm64.exe` for Windows on ARM.
+   - `WUPA-3.2.0-win-x64.exe` for most Windows PCs.
+   - `WUPA-3.2.0-win-arm64.exe` for Windows on ARM.
 2. Run the executable and approve UAC.
 3. Select **Start tracking** before the update is offered or installed.
 4. Wait for **Ready for the 25H2 update**. You can then close WUPA.
@@ -70,7 +70,15 @@ Native trace capture recursively attempts every retained `.etl` (including `.etl
 
 Microsoft documents the [NetworkService DO trace path](https://learn.microsoft.com/en-us/windows/deployment/do/delivery-optimization-test) and [Panther setup performance ETL](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-log-files-and-event-logs?view=windows-11).
 
-For full live capture, cancel or finish an existing 3.0 monitoring run and start a new run with 3.1 before the upgrade. Opening a newer executable does not replace already-running scheduled-task code. After-the-fact analysis can only recover events Windows retained.
+For full live capture, start tracking before the upgrade. Opening a newer executable does not by itself replace already-running scheduled-task code. WUPA 3.2 offers **Apply engine 3.2.0 to this active run** for compatible 3.0.0/3.1.0/3.1.1 cases; it retains their original baseline and samples, journals a brief sampling pause, and updates only the owned task actions. Do not cancel/re-arm an ongoing case just to obtain the report fix. Earlier data cannot acquire observations that the older recorder never captured.
+
+## Verified updates
+
+**Check for updates** checks the public GitHub stable release. A short, non-blocking check also runs when the GUI opens; failed/offline checks do not prevent collection. Nothing is uploaded, no GitHub credentials are stored, and SYSTEM recorder/resume tasks never check for updates.
+
+Downloads require explicit approval. An RSA-PSS signed release manifest, verified using the public key embedded in the EXE, authorizes exact filenames, versions, sizes and SHA-256 hashes. Engine ZIPs are verified inside and outside, extracted with traversal/duplicate/reparse safeguards, and staged in a separate versioned local directory. Merely installing a newer engine does not mutate an active run: use its separate **Apply engine to this active run** link and review the collector status afterward. Busy collectors, incompatible state schemas, and downgrades are refused; interrupted migrations have a recoverable journal and preserve evidence.
+
+Engine-only hotfixes use a small ZIP. Releases requiring a newer GUI download a replacement portable EXE locally and offer to open it; an EXE on a network share is never overwritten. Compatible authenticated cached engines work offline; the embedded engine remains the baseline fallback. The first move from 3.1.1 to 3.2.0 still requires downloading the new EXE once. See [update operations and release signing](docs/UPDATES.md).
 
 ## Results
 

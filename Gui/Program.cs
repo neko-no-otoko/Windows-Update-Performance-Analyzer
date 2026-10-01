@@ -29,9 +29,9 @@ internal static class Program
     }
 }
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
-    private const string AppVersion = "3.1.1";
+    internal const string AppVersion = "3.2.0";
     private const int TargetBuild = 26200;
     private readonly Label _status = new();
     private readonly Label _statusDetail = new();
@@ -163,6 +163,7 @@ internal sealed class MainForm : Form
         _reportLinks.Visible = false;
         _reportLinks.Controls.AddRange(new Control[] { _openReport, _openFolder });
         _content.Controls.Add(_reportLinks);
+        BuildUpdateLinks();
 
         _detailsPanel.Dock = DockStyle.Top;
         _detailsPanel.Height = 260;
@@ -227,6 +228,7 @@ internal sealed class MainForm : Form
             foreach (var label in _title.Controls.OfType<Label>()) label.MaximumSize = new Size(Math.Max(1, width - LogicalToDeviceUnits(118)), 0);
             _status.MaximumSize = _statusDetail.MaximumSize = _stage.MaximumSize = new Size(textWidth, 0);
             _analyze.MaximumSize = _cancel.MaximumSize = new Size(width, 0);
+            _updateLink.MaximumSize = _repairRun.MaximumSize = new Size(width, 0);
             var logHeight = Math.Max(LogicalToDeviceUnits(220), Math.Min(LogicalToDeviceUnits(420), _viewport.ClientSize.Height - LogicalToDeviceUnits(460)));
             _detailsPanel.MinimumSize = new Size(0, logHeight);
             _detailsPanel.Height = logHeight;
@@ -263,14 +265,18 @@ internal sealed class MainForm : Form
         {
             AppendLog("Preparing the verified embedded WUPA collector…");
             _runtimePath = await Task.Run(() => PayloadManager.EnsureExtracted(AppVersion));
+            if (IsDisposed || Disposing) return;
+            InitializeUpdater();
             AppendLog($"Collector ready: {_runtimePath}");
             RefreshState();
             _timer.Interval = 5000;
             _timer.Tick += (_, _) => { if (!_busy) RefreshState(); };
             _timer.Start();
+            await CheckForUpdatesAsync(false);
         }
         catch (Exception ex)
         {
+            if (IsDisposed || Disposing) return;
             SetStatus("WUPA could not start", ex.Message, true);
             AppendLog(ex.ToString());
             MessageBox.Show(this, ex.Message, "WUPA", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -297,6 +303,7 @@ internal sealed class MainForm : Form
     {
         if (_busy || string.IsNullOrWhiteSpace(_runtimePath)) return;
         _busy = true;
+        RefreshUpdateControls();
         _actionStartedUtc = DateTime.UtcNow;
         SetBusy(true);
         _log.Clear();
@@ -307,6 +314,9 @@ internal sealed class MainForm : Form
 
         try
         {
+            if (activeBefore is not null && action is "Finish" or "Resume" &&
+                (!CanMigrate(activeBefore) || UpdateCore.ParseVersion(activeBefore.ToolVersion) > UpdateCore.ParseVersion(_engineVersion)))
+                throw new InvalidOperationException("This active run needs a compatible, verified engine before finalization. Use its matching WUPA release; do not downgrade the recorder.");
             var result = await RunBackendAsync(action);
             RefreshState(false);
             var activeAfter = ActiveRunInfo.TryRead();
@@ -322,6 +332,7 @@ internal sealed class MainForm : Form
             else if (action is "Finish" or "Resume" or "Analyze")
             {
                 if (result.RunLockCollision) { ShowAutomaticFinalization(activeAfter ?? activeBefore, true); return; }
+                if (result.ExitCode is not (0 or 10 or 20 or 30)) throw new InvalidOperationException($"Collector failed with code {result.ExitCode}. {result.LastMessage}");
                 var report = FindLatestReport(_actionStartedUtc.AddSeconds(-5));
                 if (report is null) throw new InvalidOperationException(result.LastMessage ?? $"The collector exited with code {result.ExitCode} without creating a report.");
                 _lastOutputPath = Path.GetDirectoryName(report);
@@ -381,6 +392,12 @@ internal sealed class MainForm : Form
         var collector = active?.TryReadLatestCollectorStatus();
         if (collector is not null && !string.Equals(_lastCollectorLine, collector.RawLine, StringComparison.Ordinal)) { _lastCollectorLine = collector.RawLine; AppendLog("[Collector.log] " + collector.RawLine); }
         ApplyViewState(CurrentBuild(), legacyActive, active, active?.ProbeRunLock() ?? RunLockStatus.NotHeld, collector, FindLatestReport() is not null, updateStatus);
+        if (active is null && ActiveRunInfo.PointerExists())
+        {
+            _primary.Enabled = _analyze.Enabled = false;
+            if (updateStatus && !_busy) SetStatus("The active run state could not be read", "WUPA will not start a conflicting run or delete evidence. Check ProgramData\\WUPA\\ActiveRun.json and the collector log.", true);
+        }
+        RefreshUpdateControls();
     }
 
     // The same rendering path is exercised by the Windows layout harness with
@@ -458,10 +475,10 @@ internal sealed class MainForm : Form
 
     private string? FindLatestReport(DateTime? notBeforeUtc = null)
     {
-        if (!string.IsNullOrWhiteSpace(_lastOutputPath)) { var known = Path.Combine(_lastOutputPath, "Report.html"); if (File.Exists(known) && (!notBeforeUtc.HasValue || File.GetLastWriteTimeUtc(known) >= notBeforeUtc.Value)) return known; }
+        if (!string.IsNullOrWhiteSpace(_lastOutputPath)) { var known = Path.Combine(_lastOutputPath, "Report.html"); if (ReportCompletion.IsComplete(known) && (!notBeforeUtc.HasValue || File.GetLastWriteTimeUtc(known) >= notBeforeUtc.Value)) return known; }
         var parent = GetPublicDocuments();
         if (!Directory.Exists(parent)) return null;
-        try { return Directory.EnumerateFiles(parent, "Report.html", SearchOption.AllDirectories).Select(path => new FileInfo(path)).Where(file => file.Directory?.Name.StartsWith("WUPA-", StringComparison.OrdinalIgnoreCase) == true).Where(file => !notBeforeUtc.HasValue || file.LastWriteTimeUtc >= notBeforeUtc.Value).OrderByDescending(file => file.LastWriteTimeUtc).FirstOrDefault()?.FullName; }
+        try { return Directory.EnumerateFiles(parent, "Report.html", SearchOption.AllDirectories).Select(path => new FileInfo(path)).Where(file => file.Directory?.Name.StartsWith("WUPA-", StringComparison.OrdinalIgnoreCase) == true).Where(file => !notBeforeUtc.HasValue || file.LastWriteTimeUtc >= notBeforeUtc.Value).OrderByDescending(file => file.LastWriteTimeUtc).FirstOrDefault(file => ReportCompletion.IsComplete(file.FullName))?.FullName; }
         catch { return null; }
     }
 
@@ -489,6 +506,9 @@ internal sealed class ActiveRunInfo
     public string RunPath { get; init; } = string.Empty;
     public string? OutputPath { get; init; }
     public string RecorderStartStatus { get; init; } = string.Empty;
+    public string ToolVersion { get; init; } = string.Empty;
+    public string RuntimePath { get; init; } = string.Empty;
+    public int SchemaVersion { get; init; }
     public DateTime? ExpiresUtc { get; init; }
     public string ExpiresUtcLocal => ExpiresUtc?.ToLocalTime().ToString("g") ?? "unknown";
     public RunLockStatus ProbeRunLock() { if (string.IsNullOrWhiteSpace(RunPath)) return RunLockStatus.Unknown; var path = Path.Combine(RunPath, "State", "run.lock"); if (!File.Exists(path)) return RunLockStatus.NotHeld; try { using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None); return RunLockStatus.NotHeld; } catch (FileNotFoundException) { return RunLockStatus.NotHeld; } catch (DirectoryNotFoundException) { return RunLockStatus.NotHeld; } catch (IOException) { return RunLockStatus.Held; } catch { return RunLockStatus.Unknown; } }
@@ -503,10 +523,17 @@ internal sealed class ActiveRunInfo
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "WUPA", "ActiveRun.json");
         if (!File.Exists(path)) return null;
-        try { using var document = JsonDocument.Parse(File.ReadAllText(path)); var root = document.RootElement; var recorderStatus = string.Empty; if (root.TryGetProperty("RecorderStart", out var recorder) && recorder.ValueKind == JsonValueKind.Object && recorder.TryGetProperty("Status", out var status)) recorderStatus = status.ToString(); return new ActiveRunInfo { RunId = ReadString(root, "RunId"), Status = ReadString(root, "Status"), TargetVersion = ReadString(root, "TargetVersion"), RunPath = ReadString(root, "RunPath"), OutputPath = ReadString(root, "OutputPath"), RecorderStartStatus = recorderStatus, ExpiresUtc = DateTime.TryParse(ReadString(root, "ExpiresUtc"), out var expires) ? expires.ToUniversalTime() : null }; }
+        try { using var document = JsonDocument.Parse(File.ReadAllText(path)); var root = document.RootElement; var recorderStatus = string.Empty; if (root.TryGetProperty("RecorderStart", out var recorder) && recorder.ValueKind == JsonValueKind.Object && recorder.TryGetProperty("Status", out var status)) recorderStatus = status.ToString(); return new ActiveRunInfo { RunId = ReadString(root, "RunId"), Status = ReadString(root, "Status"), TargetVersion = ReadString(root, "TargetVersion"), RunPath = ReadString(root, "RunPath"), OutputPath = ReadString(root, "OutputPath"), ToolVersion = ReadString(root, "ToolVersion"), RuntimePath = ReadString(root, "RuntimePath"), SchemaVersion = root.TryGetProperty("SchemaVersion", out var schema) && schema.TryGetInt32(out var number) ? number : 0, RecorderStartStatus = recorderStatus, ExpiresUtc = DateTime.TryParse(ReadString(root, "ExpiresUtc"), out var expires) ? expires.ToUniversalTime() : null }; }
         catch { return null; }
     }
     public static bool LegacyCaseExists() => File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Win11UpgradeDiag", "ActiveRun.json"));
+    public static bool PointerExists() => File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "WUPA", "ActiveRun.json"));
+    public bool HasPendingRuntimeUpdate()
+    {
+        try { var root = Path.Combine(RunPath, "State", "Updates"); if (!Directory.Exists(root)) return false; foreach (var file in Directory.EnumerateFiles(root, "journal.json", SearchOption.AllDirectories)) { using var document = JsonDocument.Parse(File.ReadAllText(file)); if (ReadString(document.RootElement, "Status") == "Pending") return true; } }
+        catch { return true; }
+        return false;
+    }
     private static string ReadString(JsonElement root, string name) => root.TryGetProperty(name, out var value) ? value.ToString() : string.Empty;
 }
 
@@ -527,7 +554,7 @@ internal sealed class BackendExecutionResult
     public int ExitCode { get; }
     public IReadOnlyList<string> Lines { get; }
     public bool RunLockCollision => Lines.Any(line => line.Contains("already handling this run", StringComparison.OrdinalIgnoreCase));
-    public string? LastMessage => Lines.LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
+    public string? LastMessage => Lines.LastOrDefault(line => line.Contains("Fatal tool failure:", StringComparison.OrdinalIgnoreCase) || line.Contains("modules could not be loaded", StringComparison.OrdinalIgnoreCase) || line.Contains("integrity check failed", StringComparison.OrdinalIgnoreCase)) ?? Lines.LastOrDefault(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("Collector exited with code ", StringComparison.Ordinal));
     public BackendExecutionResult(int exitCode, IReadOnlyList<string> lines) { ExitCode = exitCode; Lines = lines; }
 }
 

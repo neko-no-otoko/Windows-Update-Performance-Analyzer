@@ -12,6 +12,7 @@ $rootFiles = @(
     'NOTICE.md',
     'VERSION',
     'Watch-Win11Upgrade.ps1'
+    'Update-WupaActiveRun.ps1'
 )
 $folderFiles = @('Assets', 'Data', 'Modules')
 $relativeFiles = New-Object Collections.ArrayList

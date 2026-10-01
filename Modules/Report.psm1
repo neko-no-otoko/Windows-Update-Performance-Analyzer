@@ -20,18 +20,24 @@ function Get-WudAllCollectorRecords {
     $records = New-Object Collections.ArrayList
     foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidencePath -File -Recurse -Filter 'collector-records.json' -ErrorAction SilentlyContinue)) {
         $snapshot = Split-Path -Leaf (Split-Path -Parent $file.FullName)
-        foreach ($record in @(Read-WudJson -Path $file.FullName)) {
+        try { $snapshotRecords = @(Read-WudJson -Path $file.FullName) }
+        catch {
+            $null = Add-WudCollectionGap -Context $Context -Collector 'report-collector-records' -Source $file.FullName -Status 'MetadataUnreadable' -Detail $_.Exception.Message -Impact 'Material'
+            continue
+        }
+        foreach ($record in $snapshotRecords) {
+            if (-not $record) { continue }
             $null = $records.Add([pscustomobject][ordered]@{
                 Snapshot    = $snapshot
-                Id          = $record.Id
+                Id          = Get-WudProperty $record 'Id' 'unknown'
                 Version     = Get-WudProperty $record 'Version' $Context.ToolVersion
-                Description = $record.Description
-                Required    = $record.Required
-                Status      = $record.Status
-                Detail      = $record.Detail
-                StartedUtc  = $record.StartedUtc
-                EndedUtc    = $record.EndedUtc
-                DurationMs  = $record.DurationMs
+                Description = Get-WudProperty $record 'Description'
+                Required    = Get-WudProperty $record 'Required' $false
+                Status      = Get-WudProperty $record 'Status' 'Unknown'
+                Detail      = Get-WudProperty $record 'Detail'
+                StartedUtc  = Get-WudProperty $record 'StartedUtc'
+                EndedUtc    = Get-WudProperty $record 'EndedUtc'
+                DurationMs  = Get-WudProperty $record 'DurationMs'
             })
         }
     }
@@ -187,29 +193,48 @@ function Get-WudEvidenceSourceMappings {
     foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidencePath -File -Recurse -Filter 'raw-copy-results.json' -ErrorAction SilentlyContinue)) {
         $relativeRecord = (Get-WudRelativePath -BasePath $Context.EvidencePath -Path $file.FullName).Replace('\', '/')
         $snapshot = @($relativeRecord -split '/')[0]
-        $record = Read-WudJson -Path $file.FullName
-        foreach ($source in @($record.Sources)) {
+        try { $record = Read-WudJson -Path $file.FullName }
+        catch {
+            $null = Add-WudCollectionGap -Context $Context -Collector 'report-source-mappings' -Source $file.FullName -Status 'MetadataUnreadable' -Detail $_.Exception.Message -Impact 'Material'
+            continue
+        }
+        if (-not $record) {
+            $null = Add-WudCollectionGap -Context $Context -Collector 'report-source-mappings' -Source $file.FullName -Status 'MetadataUnreadable' -Detail 'Raw-copy metadata was empty or unavailable.' -Impact 'Material'
+            continue
+        }
+        foreach ($source in @(Get-WudProperty $record 'Sources' @())) {
+            if (-not $source) { continue }
+            $sourcePath = Get-WudProperty $source 'Source'
+            $destination = Get-WudProperty $source 'Destination'
+            $present = Get-WudProperty $source 'Present'
+            $copied = Get-WudProperty $source 'Copied'
+            if ($null -eq $present -or $null -eq $copied -or -not $sourcePath -or -not $destination) { $null = Add-WudCollectionGap -Context $Context -Collector 'report-source-mappings' -Source $file.FullName -Status 'MetadataIncomplete' -Detail 'A raw source record is missing required source/copy-state fields.' -Impact 'Material' }
             $null = $mappings.Add([pscustomobject][ordered]@{
                 Snapshot      = $snapshot
-                SourcePath    = $source.Source
-                ArchivePrefix = ('{0}/Raw/{1}' -f $snapshot, $source.Destination)
-                Present       = [bool]$source.Present
-                Copied        = [bool]$source.Copied
-                State         = if (-not $source.Present) { 'Missing' } elseif ($source.Copied) { 'Copied' } else { 'CopyFailedOrEmpty' }
+                SourcePath    = $sourcePath
+                ArchivePrefix = if ($destination) { ('{0}/Raw/{1}' -f $snapshot, $destination) } else { $null }
+                Present       = $present
+                Copied        = [bool]$copied
+                State         = if ($null -eq $present -or $null -eq $copied -or -not $sourcePath -or -not $destination) { 'MetadataIncomplete' } elseif (-not $present) { 'Missing' } elseif ($copied) { 'Copied' } else { 'CopyFailedOrEmpty' }
             })
         }
-        if ($record.MemoryDump) {
+        $dump = Get-WudProperty $record 'MemoryDump'
+        if ($dump) {
+            $dumpPath = Get-WudProperty $dump 'Path'
+            $copied = [bool](Get-WudProperty $dump 'Copied' $false)
+            $excluded = (Get-WudProperty $dump 'CollectionStatus') -eq 'ExcludedByDesign'
+            if (-not $excluded -and -not $dumpPath) { $null = Add-WudCollectionGap -Context $Context -Collector 'report-source-mappings' -Source $file.FullName -Status 'MetadataIncomplete' -Detail 'Legacy dump metadata does not identify a source path.' -Impact 'Material' }
             $null = $mappings.Add([pscustomobject][ordered]@{
                 Snapshot      = $snapshot
-                SourcePath    = $record.MemoryDump.Path
-                ArchivePrefix = if ($record.MemoryDump.Copied) { "$snapshot/Raw/Windows-MEMORY.DMP" } else { $null }
-                Present       = $true
-                Copied        = [bool]$record.MemoryDump.Copied
-                State         = if ($record.MemoryDump.Copied) { 'Copied' } else { 'MetadataOnly' }
-                Length        = $record.MemoryDump.Length
-                LastWriteUtc  = $record.MemoryDump.LastWriteUtc
-                Sha256        = $record.MemoryDump.Sha256
-                Detail        = $record.MemoryDump.CopyReason
+                SourcePath    = $dumpPath
+                ArchivePrefix = if (-not $excluded -and $copied -and $dumpPath) { "$snapshot/Raw/Windows-MEMORY.DMP" } else { $null }
+                Present       = if ($excluded -or -not $dumpPath) { $null } else { Get-WudProperty $dump 'Present' $true }
+                Copied        = if ($excluded) { $false } else { $copied }
+                State         = if ($excluded) { 'ExcludedByDesign' } elseif (-not $dumpPath) { 'MetadataIncomplete' } elseif ($copied) { 'Copied' } else { 'MetadataOnly' }
+                Length        = Get-WudProperty $dump 'Length'
+                LastWriteUtc  = Get-WudProperty $dump 'LastWriteUtc'
+                Sha256        = Get-WudProperty $dump 'Sha256'
+                Detail        = if ($excluded) { Get-WudProperty $dump 'Reason' } else { Get-WudProperty $dump 'CopyReason' }
             })
         }
     }
@@ -746,6 +771,8 @@ function Export-WudReportArtifacts {
     param([Parameter(Mandatory = $true)]$Context)
     Write-WudLog -Context $Context -Level INFO -Message "Finalizing report artifacts in $($Context.OutputPath)."
     $null = New-WudDirectory -Path $Context.OutputPath
+    $pendingPath = Join-Path $Context.OutputPath 'Report.pending'
+    Write-WudText -Path $pendingPath -Text ([DateTime]::UtcNow.ToString('o'))
     Copy-WudToolStateForArchive -Context $Context
     $recorderRoot = Join-Path $Context.RunPath 'Evidence\Recorder'
     $recorderSummary = if ($Context.Recorder) { $Context.Recorder } else { [pscustomobject][ordered]@{ SampleCount = 0; FirstSampleUtc = $null; LastSampleUtc = $null; StatesObserved = @(); StateTransitions = @(); DeliveryOptimization = $null } }
@@ -767,6 +794,21 @@ function Export-WudReportArtifacts {
     }
     $checkpointManifests = @(Get-ChildItem -LiteralPath (Join-Path $recorderRoot 'Checkpoints') -File -Recurse -Filter 'checkpoint-manifest.json' -ErrorAction SilentlyContinue | ForEach-Object { Read-WudJson -Path $_.FullName })
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Checkpoints.json') -InputObject @($checkpointManifests) -Depth 30
+    foreach ($journalFile in @(Get-ChildItem -LiteralPath (Join-Path $Context.RunPath 'State/Updates') -Filter 'journal.json' -File -Recurse -ErrorAction SilentlyContinue)) {
+        try {
+            $journal = Read-WudJson $journalFile.FullName
+            $paused = Get-WudProperty $journal 'PauseStartedUtc'
+            if ($paused) {
+                $end = Get-WudProperty $journal 'ResumeVerifiedUtc' (Get-WudProperty $journal 'RecoveredUtc')
+                $null = Add-WudCollectionGap -Context $Context -Collector 'recorder-runtime-update' -Source $journalFile.FullName -Status 'SamplingInterrupted' -Detail ("Recorder runtime update paused observation from {0} until {1}; this is a collection gap, not Windows installation duration." -f $paused, $(if ($end) { $end } else { 'an unverified restart' }))
+            }
+            if ((Get-WudProperty $journal 'Status') -eq 'Pending') { $null = Add-WudCollectionGap -Context $Context -Collector 'recorder-runtime-update' -Source $journalFile.FullName -Status 'RuntimeUpdatePendingRecovery' -Detail 'An interrupted runtime update has not been recovered.' -Impact 'Material' }
+        }
+        catch { $null = Add-WudCollectionGap -Context $Context -Collector 'recorder-runtime-update' -Source $journalFile.FullName -Status 'MetadataUnreadable' -Detail $_.Exception.Message -Impact 'Material' }
+    }
+    # Metadata parsing must precede the summary so its coverage gaps are
+    # included, rather than being discovered after Report.html is written.
+    $sourceMappings = Get-WudEvidenceSourceMappings -Context $Context
     $collectorRecords = @(Get-WudAllCollectorRecords -Context $Context)
     $evidenceManifest = @(Get-WudFileInventory -RootPath $Context.EvidencePath -Context $Context)
     foreach ($unhashed in @($evidenceManifest | Where-Object {
@@ -839,13 +881,13 @@ function Export-WudReportArtifacts {
     Export-WudCsvContract -Rows $timelineRows -Headers $timelineHeaders -Path (Join-Path $Context.OutputPath 'Timeline.csv')
     if (Test-Path -LiteralPath $Context.LogPath) { Copy-Item -LiteralPath $Context.LogPath -Destination (Join-Path $Context.OutputPath 'Collector.log') -Force }
     $preSummaryArtifacts = @('Evidence.zip', 'ReviewBundle.zip', 'Inventory.json', 'Attempts.json', 'ExcludedEvidence.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'UpdateActivity.json', 'AllUpdatesTimeline.csv', 'Collector.log') | ForEach-Object { Get-WudArtifactRecord -Path (Join-Path $Context.OutputPath $_) -BasePath $Context.OutputPath } | Where-Object { $_ }
+    $Context.ExitCode = Resolve-WudExitCode -Context $Context
     $summary = New-WudSummaryObject -Context $Context -CollectorRecords $collectorRecords -ArtifactRecords $preSummaryArtifacts
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Summary.json') -InputObject $summary -Depth 40
     $html = if ($summary.AnalysisMode -eq 'FactOnly') { Build-WudFactReportHtml -Context $Context -Summary $summary -EvidenceManifest $evidenceManifest -CollectorRecords $collectorRecords } else { Build-WudReportHtml -Context $Context -Summary $summary -EvidenceManifest $evidenceManifest -CollectorRecords $collectorRecords }
     Write-WudText -Path (Join-Path $Context.OutputPath 'Report.html') -Text $html
     $artifactFiles = @('Report.html', 'Summary.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'Attempts.json', 'ExcludedEvidence.json', 'Inventory.json', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'UpdateActivity.json', 'AllUpdatesTimeline.csv', 'ReviewBundle.zip', 'Evidence.zip', 'Collector.log')
     $artifactManifest = @($artifactFiles | ForEach-Object { Get-WudArtifactRecord -Path (Join-Path $Context.OutputPath $_) -BasePath $Context.OutputPath } | Where-Object { $_ })
-    $sourceMappings = Get-WudEvidenceSourceMappings -Context $Context
     $manifest = [pscustomobject][ordered]@{
         SchemaVersion = 2
         ToolVersion   = $Context.ToolVersion
@@ -860,11 +902,12 @@ function Export-WudReportArtifacts {
     }
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Manifest.json') -InputObject $manifest -Depth 20
     $checksumLines = New-Object Collections.ArrayList
-    foreach ($file in Get-ChildItem -LiteralPath $Context.OutputPath -File | Where-Object Name -ne 'Checksums.sha256' | Sort-Object Name) {
+    foreach ($file in Get-ChildItem -LiteralPath $Context.OutputPath -File | Where-Object { $_.Name -notin @('Checksums.sha256', 'Report.pending') } | Sort-Object Name) {
         $hash = Get-WudFileHashSafe -Path $file.FullName
         if ($hash) { $null = $checksumLines.Add("$hash  $($file.Name)") }
     }
     Write-WudText -Path (Join-Path $Context.OutputPath 'Checksums.sha256') -Text ((@($checksumLines) -join [Environment]::NewLine) + [Environment]::NewLine)
+    Remove-Item -LiteralPath $pendingPath -Force -ErrorAction Stop
     $Context.LastCopyResult = Copy-WudOutputToShare -Context $Context
     return (Join-Path $Context.OutputPath 'Report.html')
 }

@@ -8,9 +8,9 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Wupa</RootNamespace>
     <AssemblyName>WUPA</AssemblyName>
-    <Version>3.1.1</Version>
-    <FileVersion>3.1.1.0</FileVersion>
-    <AssemblyVersion>3.1.1.0</AssemblyVersion>
+    <Version>3.2.0</Version>
+    <FileVersion>3.2.0.0</FileVersion>
+    <AssemblyVersion>3.2.0.0</AssemblyVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\WUPA.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\WUPA-256.png" LogicalName="Wupa.BrandLogo" />
+    <EmbeddedResource Include="Assets\UpdatePublicKey.pem" LogicalName="Wupa.UpdatePublicKey" />
     <EmbeddedResource Include="..\Assets\**\*" LogicalName="Payload/Assets/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\Data\**\*" LogicalName="Payload/Data/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\Modules\**\*" LogicalName="Payload/Modules/%(RecursiveDir)%(Filename)%(Extension)" />
@@ -31,5 +32,6 @@
     <EmbeddedResource Include="..\NOTICE.md" LogicalName="Payload/NOTICE.md" />
     <EmbeddedResource Include="..\VERSION" LogicalName="Payload/VERSION" />
     <EmbeddedResource Include="..\Watch-Win11Upgrade.ps1" LogicalName="Payload/Watch-Win11Upgrade.ps1" />
+    <EmbeddedResource Include="..\Update-WupaActiveRun.ps1" LogicalName="Payload/Update-WupaActiveRun.ps1" />
   </ItemGroup>
 </Project>

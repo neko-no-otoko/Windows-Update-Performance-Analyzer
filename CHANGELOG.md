@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.0 — 2026-10-01
+
+- Fix fatal report export when focused raw-copy metadata excludes MEMORY.DMP without a Path field. Preserve excluded, absent, legacy and incomplete metadata accurately; report malformed metadata as coverage gaps rather than strict-mode crashes.
+- Prevent partial HTML/fatal exits from being presented as completed reports. Add an exporter pending marker and require matching report/summary/manifest checksum proofs; preserve the actual fatal message in the GUI.
+- Add opt-in signed GitHub release downloads with an embedded RSA-PSS verification key, bounded HTTPS checks, exact size/hash/content validation, safe extraction, exclusive staging and offline cache verification. Keep the single portable EXE; newer shells download locally without overwriting network shares.
+- Add explicit compatible active-run migration: lock-aware task ownership checks, exact XML/state recovery journals, recorder restart verification and interruption coverage. Retain RunId, baseline, samples, setup hooks/backup and expiry; refuse busy/incompatible/downgrade cases.
+- Add real raw-collector/exporter fixtures for retrospective 25H2 and preflight/final 23H2-to-25H2 snapshots, plus legacy/partial/truncated metadata, migration failure/recovery, updater integrity/transport and report-completion tests. Validate Windows PowerShell 5.1 and native layout in CI; record lab scope without claiming a full feature-upgrade run.
+
 ## 3.1.1 — 2026-10-01
 
 - Center the native GUI in a width-limited, scrollable layout; remove fixed-width status text and the blank expanding row. Collector-log toggles no longer resize the window or disturb maximized state.

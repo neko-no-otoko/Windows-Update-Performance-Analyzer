@@ -44,6 +44,8 @@ jobs:
             './Tests/Invoke-V200Tests.ps1',
             './Tests/Invoke-V300Tests.ps1'
             './Tests/Invoke-UpgradeIdentityTests.ps1'
+            './Tests/Invoke-V320ReportTests.ps1'
+            './Tests/Invoke-V320MigrationTests.ps1'
           )
           foreach ($test in $tests) {
             & pwsh -NoProfile -File $test
@@ -52,7 +54,19 @@ jobs:
 
       - name: Validate upgrade identity and timing on Windows PowerShell 5.1
         shell: powershell
-        run: ./Tests/Invoke-UpgradeIdentityTests.ps1
+        run: |
+          ./Tests/Invoke-UpgradeIdentityTests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 identity fixtures failed.' }
+          ./Tests/Invoke-V320ReportTests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 real collector/export fixtures failed.' }
+          ./Tests/Invoke-V320MigrationTests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 migration fixtures failed.' }
+
+      - name: Validate updater integrity and failure scenarios
+        shell: pwsh
+        run: |
+          dotnet run --project ./Tests/UpdateCore.Tests/UpdateCore.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Updater security fixtures failed.' }
 
       - name: Validate native GUI layout and render snapshots
         shell: pwsh
@@ -72,6 +86,10 @@ jobs:
         shell: pwsh
         run: ./Build/Build-WindowsExecutables.ps1 -RuntimeIdentifiers win-x64,win-arm64
 
+      - name: Build unsigned update artifacts for offline signing
+        shell: pwsh
+        run: ./Build/Create-UpdateRelease.ps1
+
       - name: Build portable GUI validation harness for Windows VM checks
         shell: pwsh
         run: |
@@ -86,9 +104,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WUPA-3.1.1
+          name: WUPA-3.2.0
           path: |
             dist/*.exe
             dist/*.json
             dist/*.sha256
+            dist/*.zip
           if-no-files-found: error

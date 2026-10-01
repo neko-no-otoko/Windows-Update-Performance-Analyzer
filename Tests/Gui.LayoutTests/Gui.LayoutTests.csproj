@@ -12,5 +12,9 @@
   <ItemGroup>
     <EmbeddedResource Include="../../Gui/Assets/WUPA-256.png" LogicalName="Wupa.BrandLogo" />
     <Compile Include="../../Gui/Program.cs" Link="ProductionGui.cs" />
+    <Compile Include="../../Gui/UpdateCore.cs" Link="UpdateCore.cs" />
+    <Compile Include="../../Gui/UpdatesUI.cs" Link="UpdatesUI.cs" />
+    <Compile Include="../../Gui/ReportCompletion.cs" Link="ReportCompletion.cs" />
+    <EmbeddedResource Include="../../Gui/Assets/UpdatePublicKey.pem" LogicalName="Wupa.UpdatePublicKey" />
   </ItemGroup>
 </Project>

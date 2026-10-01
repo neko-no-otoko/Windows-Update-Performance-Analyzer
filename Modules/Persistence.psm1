@@ -138,7 +138,7 @@ function Install-WudRuntimeCopy {
     $sourceFull = [IO.Path]::GetFullPath($Context.ToolRoot).TrimEnd('\')
     $runtimeFull = [IO.Path]::GetFullPath($runtimeRoot).TrimEnd('\')
     if ($sourceFull -eq $runtimeFull) { return $runtimeRoot }
-    foreach ($file in @('Invoke-Win11UpgradeDiag.ps1', 'Watch-Win11Upgrade.ps1', 'BundleManifest.sha256', 'VERSION', 'NOTICE.md')) {
+    foreach ($file in @('Invoke-Win11UpgradeDiag.ps1', 'Watch-Win11Upgrade.ps1', 'Update-WupaActiveRun.ps1', 'BundleManifest.sha256', 'VERSION', 'NOTICE.md')) {
         $source = Join-Path $Context.ToolRoot $file
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeRoot $file) -Force }
     }
