@@ -7,6 +7,13 @@ foreach ($module in @('Common', 'UpdateTracking', 'Recorder', 'Collectors', 'Ana
 function Assert-Report320 { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw $Message }; Write-Host "PASS: $Message" }
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('WUPA-Report320-' + [Guid]::NewGuid().ToString('N'))
 $oldDrive = $env:SystemDrive; $oldRoot = $env:SystemRoot; $oldData = $env:ProgramData
+& (Get-Module Collectors) {
+    $empty = New-Object Management.Automation.ErrorRecord ((New-Object Exception 'localized fixture text'), 'NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand', [Management.Automation.ErrorCategory]::ObjectNotFound, $null)
+    if ((Get-WudEventQueryErrorDisposition $empty) -ne 'Empty') { throw 'An empty event query is not a collection failure.' }
+    $denied = New-Object Management.Automation.ErrorRecord ((New-Object Exception 'No events were found that match the specified selection criteria.'), 'UnauthorizedAccess', [Management.Automation.ErrorCategory]::PermissionDenied, $null)
+    if ((Get-WudEventQueryErrorDisposition $denied) -ne 'Failed') { throw 'Error disposition must not rely on localized message text.' }
+    Write-Host 'PASS: empty event query and actual provider failures remain distinct by identifier'
+}
 try {
     $env:SystemDrive = New-WudDirectory (Join-Path $fixture 'fake-drive')
     $env:SystemRoot = New-WudDirectory (Join-Path $fixture 'fake-windows')
@@ -15,6 +22,8 @@ try {
         $caseRoot = Join-Path $fixture $scenario
         $ctx = New-WudRunContext -ToolRoot $toolRoot -ToolVersion '3.2.0-test' -RunId $scenario -RunPath (Join-Path $caseRoot 'run') -OutputPath (Join-Path $caseRoot 'out') -Mode 'Forensic' -PhaseLabel 'Forensic' -TargetVersion '25H2' -CopyTo $null -MediaPath $null -AcceptWindowsEula $false -IncludeLargeDumps $false -NoInternet $true -NoSetupHooks $true -ArmDays 30
         $ctx.Inventory['Identity'] = [pscustomobject]@{ DisplayVersion = '25H2'; Build = 26200; UBR = 1; ImageState = 'IMAGE_STATE_COMPLETE'; ComputerName = 'fixture' }
+        $null = Invoke-WudCollector $ctx 'fixture-one' 'First real collector record' { } $true
+        $null = Invoke-WudCollector $ctx 'fixture-two' 'Second real collector record' { }
         if ($scenario -eq 'BaselineAndFinal') {
             $ctx.PhaseLabel = 'Preflight'; $ctx.Mode = 'Preflight'
             $ctx.SnapshotPath = New-WudDirectory (Join-Path $ctx.EvidencePath 'Preflight')
@@ -25,6 +34,7 @@ try {
             Write-WudJsonLine -Path (Join-Path $ctx.RunPath 'Evidence/Recorder/ProgressSamples.jsonl') -InputObject ([pscustomobject]@{ TimestampUtc = '2026-10-01T10:00:00Z'; Os = [pscustomobject]@{ Build = 26200; TargetPresent = $true } })
         }
         & (Get-Module Collectors) { param($c) Invoke-WudRawEvidenceCollector $c } $ctx
+        Write-WudJsonAtomic (Join-Path $ctx.SnapshotPath 'collector-records.json') @($ctx.CollectorRecords)
         $rawPath = Join-Path $ctx.SnapshotPath 'raw-copy-results.json'
         if ($scenario -eq 'LegacyDump') {
             Write-WudJsonAtomic $rawPath ([pscustomobject]@{ Sources = @(); MemoryDump = [pscustomobject]@{ Path = 'C:\Windows\MEMORY.DMP'; Copied = $false; Length = 123; CopyReason = 'Legacy metadata only.' } })
@@ -40,6 +50,8 @@ try {
         Assert-Report320 (-not (Test-Path (Join-Path $ctx.OutputPath 'Report.pending'))) "$scenario removes the completion marker only after export succeeds"
         foreach ($name in @('Report.html', 'Summary.json', 'Manifest.json', 'Checksums.sha256', 'Evidence.zip', 'ReviewBundle.zip')) { Assert-Report320 (Test-Path (Join-Path $ctx.OutputPath $name)) "$scenario produces $name rather than fatal code 40" }
         $manifest = Read-WudJson (Join-Path $ctx.OutputPath 'Manifest.json')
+        $summary = Read-WudJson (Join-Path $ctx.OutputPath 'Summary.json')
+        if ($scenario -ne 'TruncatedMetadata') { Assert-Report320 (@($summary.CollectionCoverage).Count -eq 2 -and @($summary.CollectionCoverage | Where-Object Id -eq 'unknown').Count -eq 0) "$scenario preserves each JSON-array collector record under PS5/PS7" }
         Assert-Report320 ([bool]$manifest.ArchiveVerification.Verified) "$scenario archive reopens and verifies"
         if ($scenario -in @('Already25H2', 'BaselineAndFinal')) {
             $exclusions = @($manifest.SourceMappings | Where-Object State -eq 'ExcludedByDesign')

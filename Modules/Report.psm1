@@ -20,7 +20,10 @@ function Get-WudAllCollectorRecords {
     $records = New-Object Collections.ArrayList
     foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidencePath -File -Recurse -Filter 'collector-records.json' -ErrorAction SilentlyContinue)) {
         $snapshot = Split-Path -Leaf (Split-Path -Parent $file.FullName)
-        try { $snapshotRecords = @(Read-WudJson -Path $file.FullName) }
+        # PS5 ConvertFrom-Json emits a root array as one pipeline object;
+        # wrapping that pipeline in @() nests it and hides every record's Id.
+        # Assign first, then foreach enumerates the JSON array on PS5 and PS7.
+        try { $snapshotRecords = Read-WudJson -Path $file.FullName }
         catch {
             $null = Add-WudCollectionGap -Context $Context -Collector 'report-collector-records' -Source $file.FullName -Status 'MetadataUnreadable' -Detail $_.Exception.Message -Impact 'Material'
             continue

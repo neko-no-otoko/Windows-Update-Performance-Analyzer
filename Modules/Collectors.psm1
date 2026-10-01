@@ -642,6 +642,13 @@ function Invoke-WudWindowsUpdateLogCollector {
     }
 }
 
+function Get-WudEventQueryErrorDisposition {
+    param($ErrorRecord)
+    # Use the provider's locale-neutral error identifier, not message text.
+    if ($ErrorRecord.FullyQualifiedErrorId -match '^NoMatchingEventsFound(?:,|$)') { return 'Empty' }
+    return 'Failed'
+}
+
 function Invoke-WudEventCollector {
     param($Context)
     $path = New-WudDirectory -Path (Join-Path $Context.SnapshotPath 'Events')
@@ -670,9 +677,12 @@ function Invoke-WudEventCollector {
     }
     $start = (Get-Date).AddDays(-[int]$Context.Settings.eventLookbackDays)
     $events = New-Object Collections.ArrayList
+    $queries = New-Object Collections.ArrayList
     foreach ($log in $channels) {
+        $returnedCount = 0
         try {
             foreach ($event in @(Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $start; Level = @(1, 2, 3) } -ErrorAction Stop | Select-Object -First 5000)) {
+                $returnedCount++
                 $null = $events.Add([pscustomobject][ordered]@{
                     TimeCreated = $event.TimeCreated
                     LogName     = $event.LogName
@@ -684,9 +694,19 @@ function Invoke-WudEventCollector {
                     Message     = $event.Message
                 })
             }
+            $null = $queries.Add([pscustomobject]@{ Channel = $log; Status = 'Available'; WarningErrorCount = $returnedCount; Error = $null })
         }
-        catch { $null = Add-WudCollectionGap -Context $Context -Collector 'events' -Source $log -Status 'ReadableQueryFailed' -Detail (Get-WudErrorDetail -ErrorRecord $_) }
+        catch {
+            $disposition = Get-WudEventQueryErrorDisposition $_
+            if ($disposition -eq 'Empty') { $null = $queries.Add([pscustomobject]@{ Channel = $log; Status = 'Empty'; WarningErrorCount = 0; Error = $null }) }
+            else {
+                $detail = Get-WudErrorDetail -ErrorRecord $_
+                $null = Add-WudCollectionGap -Context $Context -Collector 'events' -Source $log -Status 'ReadableQueryFailed' -Detail $detail
+                $null = $queries.Add([pscustomobject]@{ Channel = $log; Status = 'Failed'; WarningErrorCount = $returnedCount; Error = $detail })
+            }
+        }
     }
+    Write-WudJsonAtomic -Path (Join-Path $path 'event-query-results.json') -InputObject @($queries)
     Write-WudJsonAtomic -Path (Join-Path $path 'event-exports.json') -InputObject @($exports)
     Write-WudJsonAtomic -Path (Join-Path $path 'errors-and-warnings.json') -InputObject @($events) -Depth 10
     # Informational WU events contain download/install boundaries. Preserve
