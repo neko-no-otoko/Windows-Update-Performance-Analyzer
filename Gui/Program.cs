@@ -92,7 +92,14 @@ internal sealed class MainForm : Form
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         var logo = new PictureBox { Size = new Size(62, 62), Margin = new Padding(0, 0, 16, 0), SizeMode = PictureBoxSizeMode.Zoom };
-        try { logo.Image = Icon?.ToBitmap(); } catch { }
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Wupa.BrandLogo");
+            if (stream is not null) { using var image = Image.FromStream(stream); logo.Image = new Bitmap(image); }
+            else logo.Image = Icon?.ToBitmap();
+        }
+        catch { }
+        Disposed += (_, _) => logo.Image?.Dispose();
         heading.Controls.Add(logo, 0, 0);
         _title.AutoSize = true;
         _title.Dock = DockStyle.Top;

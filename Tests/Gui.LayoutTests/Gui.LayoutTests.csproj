@@ -10,6 +10,7 @@
     <ApplicationIcon>../../Gui/Assets/WUPA.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../Gui/Assets/WUPA-256.png" LogicalName="Wupa.BrandLogo" />
     <Compile Include="../../Gui/Program.cs" Link="ProductionGui.cs" />
   </ItemGroup>
 </Project>

@@ -22,6 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Assets\WUPA-256.png" LogicalName="Wupa.BrandLogo" />
     <EmbeddedResource Include="..\Assets\**\*" LogicalName="Payload/Assets/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\Data\**\*" LogicalName="Payload/Data/%(RecursiveDir)%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\Modules\**\*" LogicalName="Payload/Modules/%(RecursiveDir)%(Filename)%(Extension)" />
