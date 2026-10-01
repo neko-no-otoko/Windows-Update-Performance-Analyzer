@@ -33,14 +33,25 @@ internal static class GuiLayoutTests
                 foreach (var size in new[] { new Size(740, 600), new Size(860, 640), new Size(1920, 1080) })
                 {
                     form.WindowState = FormWindowState.Normal;
-                    // CI has a small desktop. A harness-only maximized rectangle
-                    // supplies a genuine wide native surface without claiming
-                    // the CI monitor itself is 1920x1080.
                     if (size.Width >= 1920)
                     {
-                        var border = new Size(form.Width - form.ClientSize.Width, form.Height - form.ClientSize.Height);
-                        form.MaximizedBounds = new Rectangle(0, 0, size.Width + border.Width, size.Height + border.Height);
-                        form.WindowState = FormWindowState.Maximized;
+                        // Render the actual production viewport offscreen at
+                        // 1920x1080. A top-level Form is capped by CI's small
+                        // desktop, so do not mislabel a clamped Form as wide.
+                        var viewport = Field<Panel>(form, "_viewport");
+                        viewport.Font = form.Font;
+                        form.Controls.Remove(viewport);
+                        viewport.Dock = DockStyle.None;
+                        viewport.Size = size;
+                        viewport.Visible = true;
+                        viewport.CreateControl(); Settle(form);
+                        Assert(viewport.Size == size, state + ": wide viewport has the requested native surface size");
+                        ValidateLayout(form, state + "-" + size.Width);
+                        using (var bitmap = new Bitmap(size.Width, size.Height)) { viewport.DrawToBitmap(bitmap, new Rectangle(Point.Empty, size)); bitmap.Save(Path.Combine(output, state + "-" + size.Width + ".png"), ImageFormat.Png); }
+                        Snapshots.Add(new { Name = state + "-" + size.Width, Kind = "NativeViewport", Width = viewport.Width, Height = viewport.Height, Dpi = form.DeviceDpi });
+                        form.Controls.Add(viewport);
+                        viewport.Dock = DockStyle.Fill; Settle(form);
+                        continue;
                     }
                     else form.ClientSize = size;
                     Settle(form);
@@ -55,8 +66,6 @@ internal static class GuiLayoutTests
                 ValidateLayout(form, state + "-log-open");
                 Save(form, output, state + "-log-open");
                 ActivateDetails(form); Settle(form);
-                form.WindowState = FormWindowState.Normal;
-                form.MaximizedBounds = Rectangle.Empty;
                 form.WindowState = FormWindowState.Maximized; Settle(form);
                 bounds = form.Bounds;
                 ActivateDetails(form); Settle(form);

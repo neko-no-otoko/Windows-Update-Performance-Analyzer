@@ -16,6 +16,9 @@ Run this matrix before general deployment. Record the WUPA executable SHA-256, a
 
 - [ ] x64 and ARM64 EXEs start, request UAC, display the WUPA icon/name, and require no parameters.
 - [ ] The main window exposes one state-appropriate primary action and no settings panel.
+- [ ] Small, normal, wide and maximized layouts keep the content centered and readable; collector-log links work with keyboard activation and do not resize/restore the window.
+- [ ] Report links are hidden until finalized output exists. Open report folder opens Public Documents; ProgramData tracking files are separately labeled inside the log section.
+- [ ] Run `dotnet run --project Tests/Gui.LayoutTests/Gui.LayoutTests.csproj --configuration Release -- <output-folder>` for safe native fixture snapshots (no collectors/tasks). Wide cases render the production viewport offscreen; actual maximized windows are checked separately. Larger-text stress cases do not replace real monitor-DPI checks.
 - [ ] The EXE verifies the embedded manifest before loading PowerShell.
 - [ ] Tampering with an extracted runtime file prevents execution.
 - [ ] AppLocker/WDAC/Smart App Control/AllSigned denial remains visible and WUPA attempts no bypass.
@@ -23,17 +26,17 @@ Run this matrix before general deployment. Record the WUPA executable SHA-256, a
 
 ## Start tracking
 
-- [ ] **Start tracking the 25H2 update** creates `%ProgramData%\WUPA\ActiveRun.json` and a run folder.
+- [ ] **Start tracking** creates `%ProgramData%\WUPA\ActiveRun.json` and a run folder.
 - [ ] The GUI does not say ready until the recorder task is Running and owns its lock.
 - [ ] Start creates no final `Report.html` or evidence archive.
 - [ ] Recorder samples every 60 seconds and restarts on boot/process failure.
 - [ ] The GUI can close without stopping recording.
 - [ ] Update progress and Delivery Optimization byte/source counters appear in JSONL or carry explicit provider errors.
-- [ ] At most eight state checkpoints are produced; each is bounded and contains no duplicate EVTX/WU/USO/DO trees.
+- [ ] At most eight state checkpoints are produced; native trace copies are bounded, exclusions/count limits are recorded, and EVTX is not repeatedly exported.
 
 ## Scope safeguards
 
-- [ ] Fresh imaging evidence under `Windows\Panther` is not copied or promoted into the update attempt.
+- [ ] Windows\Panther deployment logs remain excluded. Retained performance ETLs may be copied as raw context but are not promoted into the update attempt without attribution.
 - [ ] `$WINDOWS.~BT`, rollback, hook copies, and `Windows.old` candidates retain exact source/time/build gates.
 - [ ] Scan-only, imaging, general servicing, and non-Windows-Update candidates remain excluded/context-only.
 - [ ] Unrelated Delivery Optimization traffic is never identified as the 25H2 payload without Windows Update ownership evidence.
@@ -50,11 +53,11 @@ Run this matrix before general deployment. Record the WUPA executable SHA-256, a
 
 ## Manual finish and cancel
 
-- [ ] **Finish and create report** stops the recorder, writes an operator boundary, builds artifacts, and cleans owned persistence.
+- [ ] **Finish tracking and build report** stops the recorder, writes an operator boundary, builds artifacts, and cleans owned persistence.
 - [ ] Finishing mid-flight reports the observed state without inventing success/failure.
 - [ ] A finalization failure restarts the recorder and leaves the case retryable.
 - [ ] A held run disables duplicate finalization and displays the newest `Collector.log` status.
-- [ ] **Cancel tracking** removes owned persistence, creates no report, and retains staged evidence.
+- [ ] **Stop tracking without a report** removes owned persistence, creates no report, and retains staged evidence. A failed stop is not labeled successful.
 - [ ] Expiry performs the same owned cleanup and retains evidence.
 
 ## Focused collector
