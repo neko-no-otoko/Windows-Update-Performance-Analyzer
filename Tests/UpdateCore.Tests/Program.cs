@@ -12,6 +12,24 @@ using var signingKey = RSA.Create(3072);
 using var otherKey = RSA.Create(3072);
 using var core = new UpdateCore(signingKey.ExportSubjectPublicKeyInfoPem());
 var checks = 0;
+if (args.Length == 2 && args[0] == "--verify-report")
+{
+    var error = ReportCompletion.ValidationError(args[1]);
+    if (error is not null) throw new Exception(error);
+    Console.WriteLine("PASS: real exporter report passes production GUI completion verification.");
+    return;
+}
+if (args.Length == 4 && args[0] == "--probe-published-update")
+{
+    using var publisher = new UpdateCore(File.ReadAllText(args[3]));
+    var available = await publisher.CheckAsync(args[1]) ?? throw new Exception("No newer stable authenticated release was found.");
+    if (UpdateCore.ParseVersion(available.Manifest.MinimumAppVersion) <= UpdateCore.ParseVersion(args[1])) throw new Exception("This test expects the replacement-EXE update path.");
+    var downloaded = await publisher.DownloadApplicationAsync(available, args[2], "win-x64");
+    var application = available.Manifest.Applications["win-x64"];
+    UpdateCore.VerifyFile(downloaded, application.Length, application.Sha256);
+    Console.WriteLine("PASS: production updater discovered the public signed release, selected the required GUI replacement, downloaded and verified its exact EXE. " + available.Manifest.ReleaseVersion);
+    return;
+}
 if (args.Length == 3 && args[0] == "--verify-release")
 {
     using var publisher = new UpdateCore(File.ReadAllText(args[2]));
@@ -131,10 +149,18 @@ var reportHash = Hash(File.ReadAllBytes(report));
 File.WriteAllText(Path.Combine(reportDirectory, "Manifest.json"), JsonSerializer.Serialize(new { Artifacts = new[] { new { Name = "Report.html", Sha256 = reportHash } } }));
 File.WriteAllText(Path.Combine(reportDirectory, "Checksums.sha256"), string.Join('\n', new[] { "Report.html", "Summary.json", "Manifest.json" }.Select(name => Hash(File.ReadAllBytes(Path.Combine(reportDirectory, name))) + "  " + name)));
 Assert(ReportCompletion.IsComplete(report), "Completed report has matching manifest and checksum proofs");
+var publicRoot = Path.Combine(fixture, "public"); Directory.CreateDirectory(publicRoot);
+var caseRoot = Path.Combine(publicRoot, "WUPA-case"); Directory.CreateDirectory(caseRoot);
+foreach (var name in new[] { "Report.html", "Summary.json", "Manifest.json", "Checksums.sha256" }) File.Copy(Path.Combine(reportDirectory, name), Path.Combine(caseRoot, name));
+var unrelated = Path.Combine(publicRoot, "Unrelated", "nested"); Directory.CreateDirectory(unrelated);
+File.WriteAllText(Path.Combine(unrelated, "Report.html"), "Not a WUPA report");
+Assert(ReportLocator.Find(publicRoot) == Path.Combine(caseRoot, "Report.html"), "Discovery checks immediate WUPA folders, never unrelated recursive reports");
+Assert(ReportLocator.Find(publicRoot, reportDirectory) == report, "Known explicit output directory takes precedence over public discovery");
 File.WriteAllText(Path.Combine(reportDirectory, "Report.pending"), "incomplete retry");
 Assert(!ReportCompletion.IsComplete(report), "An interrupted retry cannot reuse an old completion proof");
 File.Delete(Path.Combine(reportDirectory, "Report.pending")); File.AppendAllText(report, "tampered");
 Assert(!ReportCompletion.IsComplete(report), "Changed HTML is not presented as an intact completed report");
+Assert(ReportCompletion.ValidationError(report)!.Contains("SHA-256 mismatch"), "Completion failure identifies the actual mismatch, not an Artifacts console tail");
 Console.WriteLine($"PASS: {checks} updater integrity/transport/cache checks. Fixtures: {fixture}");
 
 internal sealed class FixtureHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler

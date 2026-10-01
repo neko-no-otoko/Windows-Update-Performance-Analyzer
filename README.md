@@ -7,8 +7,8 @@ Windows Update Performance Analyzer is a focused, read-only Windows 11 25H2 upda
 ## Use it
 
 1. Download the one-file executable for the computer:
-   - `WUPA-3.2.0-win-x64.exe` for most Windows PCs.
-   - `WUPA-3.2.0-win-arm64.exe` for Windows on ARM.
+   - `WUPA-3.2.1-win-x64.exe` for most Windows PCs.
+   - `WUPA-3.2.1-win-arm64.exe` for Windows on ARM.
 2. Run the executable and approve UAC.
 3. Select **Start tracking** before the update is offered or installed.
 4. Wait for **Ready for the 25H2 update**. You can then close WUPA.
@@ -70,7 +70,7 @@ Native trace capture recursively attempts every retained `.etl` (including `.etl
 
 Microsoft documents the [NetworkService DO trace path](https://learn.microsoft.com/en-us/windows/deployment/do/delivery-optimization-test) and [Panther setup performance ETL](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-log-files-and-event-logs?view=windows-11).
 
-For full live capture, start tracking before the upgrade. Opening a newer executable does not by itself replace already-running scheduled-task code. WUPA 3.2 offers **Apply engine 3.2.0 to this active run** for compatible 3.0.0/3.1.0/3.1.1 cases; it retains their original baseline and samples, journals a brief sampling pause, and updates only the owned task actions. Do not cancel/re-arm an ongoing case just to obtain the report fix. Earlier data cannot acquire observations that the older recorder never captured.
+For full live capture, start tracking before the upgrade. Opening a newer executable does not by itself replace already-running scheduled-task code. WUPA 3.2.1 offers **Apply engine 3.2.1 to this active run** for compatible 3.0.0 through 3.2.0 cases; it retains their original baseline and samples, journals a brief sampling pause, and updates only the owned task actions. Do not cancel/re-arm an ongoing case just to obtain the report fix. Earlier data cannot acquire observations that the older recorder never captured.
 
 ## Verified updates
 

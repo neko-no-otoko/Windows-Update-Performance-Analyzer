@@ -233,6 +233,8 @@ function Get-WudUpgradeTrackingModel {
     $state = Read-WudJson -Path (Join-Path $Context.RunPath 'State/run-state.json')
     $windowStart = Get-WudReviewProperty $state 'CreatedUtc'
     if (-not $windowStart -and $Context.Mode -eq 'Preflight') { $windowStart = $Context.StartedUtc }
+    $decoded = Read-WudWindowsUpdateLogRecords $Context
+    foreach ($record in $decoded.Records) { $null = $records.Add($record) }
     $events = @($records | Where-Object { -not $windowStart -or ([DateTimeOffset]::Parse($_.TimestampUtc)) -ge ([DateTimeOffset]::Parse($windowStart)) } |
         Sort-Object TimestampUtc | Group-Object { '{0}|{1}|{2}' -f $_.Channel, $_.RecordId, $_.TimestampUtc } | ForEach-Object { $_.Group[0] } | Sort-Object TimestampUtc)
     $history = @($FeatureHistory | Where-Object {
@@ -247,6 +249,7 @@ function Get-WudUpgradeTrackingModel {
         Identity = $identity; WindowStartUtc = $windowStart; MatchedEvents = $matched; MatchedHistory = $matchedHistory; AllEvents = $events
         OtherEventCount = $events.Count - $matched.Count; Providers = @($providers)
         InvalidRecorderLines = @($persistent.InvalidLines)
+        LogCoverage = $decoded.Coverage; UnresolvedLogRecords = $decoded.UnresolvedRecords
         AttributionRule = 'Explicit target upgrade title discovers the identity. GUID/revision and known service must match. Temporal proximity, build strings in quality-update titles, and DO FileId alone do not identify an upgrade.'
     }
 }
@@ -258,31 +261,34 @@ function Get-WudUpgradeTimingModel {
     foreach ($event in @(Get-WudReviewProperty $Tracking 'MatchedEvents' @() | Sort-Object TimestampUtc)) {
         $event.TimestampUtc = ConvertTo-WudReviewUtc $event.TimestampUtc
         $boundary = [string]$event.Boundary
+        if ($boundary -notin @('DownloadStarted', 'DownloadCompleted', 'DownloadFailed', 'InstallStarted', 'InstallReportedSucceeded', 'InstallReportedFailed')) { continue }
         $phase = if ($boundary -match '^Download') { 'Download' } elseif ($boundary -match '^Install') { 'WindowsUpdateInstall' } else { $null }
         if (-not $phase) { continue }
         $starts = $boundary -in @('DownloadStarted', 'InstallStarted')
+        $stream = [string](Get-WudReviewProperty $event 'TimingStream' 'NativeWindowsUpdateEvents')
+        $pendingKey = $phase + '|' + $stream
         if ($starts) {
-            if ($pending.ContainsKey($phase)) { $pending[$phase].Result = 'SupersededByNextStart'; $pending.Remove($phase) }
+            if ($pending.ContainsKey($pendingKey)) { $pending[$pendingKey].Result = 'SupersededByNextStart'; $pending.Remove($pendingKey) }
             $session = [pscustomobject][ordered]@{
                 SessionId = 'operation-{0:D3}' -f ($sessions.Count + 1); Phase = $phase; UpdateID = $Tracking.Identity.UpdateID
                 RevisionNumber = $Tracking.Identity.RevisionNumber; StartUtc = $event.TimestampUtc; EndUtc = $null
-                StartKind = 'SourceEvent'; EndKind = 'NotObserved'; Result = 'Open'; ElapsedSeconds = $null
+                StartKind = Get-WudReviewProperty $event 'SourceKind' 'SourceEvent'; EndKind = 'NotObserved'; Result = 'Open'; ElapsedSeconds = $null; SourceStream = $stream
                 StartEvidenceRef = $event.SourceRef; EndEvidenceRef = $null
             }
-            $null = $sessions.Add($session); $pending[$phase] = $session
+            $null = $sessions.Add($session); $pending[$pendingKey] = $session
         }
         else {
-            if ($pending.ContainsKey($phase)) { $session = $pending[$phase]; $pending.Remove($phase) }
+            if ($pending.ContainsKey($pendingKey)) { $session = $pending[$pendingKey]; $pending.Remove($pendingKey) }
             else {
                 $session = [pscustomobject][ordered]@{
                     SessionId = 'operation-{0:D3}' -f ($sessions.Count + 1); Phase = $phase; UpdateID = $Tracking.Identity.UpdateID
                     RevisionNumber = $Tracking.Identity.RevisionNumber; StartUtc = $null; EndUtc = $null
-                    StartKind = 'NotObserved'; EndKind = 'NotObserved'; Result = 'Open'; ElapsedSeconds = $null
+                    StartKind = 'NotObserved'; EndKind = 'NotObserved'; Result = 'Open'; ElapsedSeconds = $null; SourceStream = $stream
                     StartEvidenceRef = $null; EndEvidenceRef = $null
                 }
                 $null = $sessions.Add($session)
             }
-            $session.EndUtc = $event.TimestampUtc; $session.EndKind = 'SourceEvent'; $session.Result = $boundary; $session.EndEvidenceRef = $event.SourceRef
+            $session.EndUtc = $event.TimestampUtc; $session.EndKind = Get-WudReviewProperty $event 'SourceKind' 'SourceEvent'; $session.Result = $boundary; $session.EndEvidenceRef = $event.SourceRef
             if ($session.StartUtc) { $session.ElapsedSeconds = [Math]::Round((([DateTimeOffset]::Parse($session.EndUtc)) - ([DateTimeOffset]::Parse($session.StartUtc))).TotalSeconds, 3) }
         }
     }
@@ -364,7 +370,7 @@ function Get-WudUpdateActivityModel {
             $target = Test-WudUpgradeIdentityMatch $identity $Tracking.Identity
             $role = if ($target) { 'TargetUpgrade' } elseif ($identity.Title -and (Test-WudTargetUpgradeTitle $identity.Title $Context.TargetVersion)) { 'OtherTargetCandidate' } else { 'OtherUpdate' }
             $timing = Get-WudUpgradeTimingModel -Context $Context -Tracking ([pscustomobject]@{ Identity = $identity; MatchedEvents = $serviceEvents; MatchedHistory = $serviceHistory }) -IncludeRecorderObservations $false
-            $latestEvent = @($serviceEvents | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
+            $latestEvent = @($serviceEvents | Where-Object Boundary -ne 'UpdateLogContext' | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
             $latestHistory = @($serviceHistory | Sort-Object DateUtc -Descending | Select-Object -First 1)
             $activityKey = '{0}.{1}' -f $id, $(if ($null -ne $revision) { $revision } else { 'revision-unknown' })
             if ($knownServices.Count -gt 1) { $activityKey += '.' + $(if ($service) { $service } else { 'service-unknown' }) }
@@ -373,6 +379,8 @@ function Get-WudUpdateActivityModel {
                 EventCount = $serviceEvents.Count; HistoryCount = $serviceHistory.Count
                 FirstObservedUtc = @(@($serviceEvents | ForEach-Object TimestampUtc) + @($serviceHistory | ForEach-Object DateUtc) | Sort-Object | Select-Object -First 1)[0]
                 LatestBoundary = if ($latestEvent.Count) { $latestEvent[0].Boundary } else { 'NotObserved' }
+                NativeEventCount = @($serviceEvents | Where-Object { (Get-WudReviewProperty $_ 'SourceKind') -ne 'SourceLog' }).Count
+                LogRecordCount = @($serviceEvents | Where-Object { (Get-WudReviewProperty $_ 'SourceKind') -eq 'SourceLog' }).Count
                 HistoryResult = if ($latestHistory.Count) { Get-WudOperationResultLabel $latestHistory[0].ResultCode } else { 'NotObserved' }
                 HistoryOperation = if ($latestHistory.Count) { $latestHistory[0].Operation } else { $null }
                 Timing = $timing; Events = $serviceEvents; History = $serviceHistory
@@ -380,7 +388,7 @@ function Get-WudUpdateActivityModel {
             foreach ($event in $serviceEvents) {
                 $null = $timeline.Add([pscustomobject][ordered]@{
                     TimestampUtc = $event.TimestampUtc; ActivityKey = $activityKey; UpdateID = $id; RevisionNumber = $revision; ServiceID = $identity.ServiceID
-                    Role = $role; Boundary = $event.Boundary; EventId = $event.EventId; Title = $identity.Title; EvidenceReference = $event.SourceRef; TimingKind = 'SourceEvent'
+                    Role = $role; Boundary = $event.Boundary; EventId = $event.EventId; Title = $identity.Title; EvidenceReference = $event.SourceRef; TimingKind = Get-WudReviewProperty $event 'SourceKind' 'SourceEvent'
                 })
             }
             foreach ($entry in $serviceHistory) {
@@ -775,20 +783,25 @@ function Get-WudUpgradeStatusModel {
     $rollbackMarker = Test-Path -LiteralPath (Join-Path $Context.RunPath 'State\Markers\post-rollback.marker')
     $latestHistory = @($featureRows | Sort-Object DateUtc -Descending | Select-Object -First 1)
     $failedHistory = @($latestHistory | Where-Object { (Get-WudOperationResultLabel $_.ResultCode) -in @('Failed', 'Aborted') })
-    $latestEvent = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object Boundary -in @('DownloadStarted', 'InstallStarted', 'InstallReportedSucceeded', 'InstallReportedFailed') | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
+    $latestEvent = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object Boundary -in @('DownloadStarted', 'InstallStarted', 'InstallReportedSucceeded', 'InstallReportedFailed', 'DeploymentReportedSucceeded') | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
     $targetInProgress = $latestEvent.Count -gt 0 -and $latestEvent[0].Boundary -in @('DownloadStarted', 'InstallStarted')
     if ($failedHistory.Count -gt 0 -and $targetInProgress -and ([DateTimeOffset]::Parse($latestEvent[0].TimestampUtc)) -gt ([DateTimeOffset]::Parse($failedHistory[0].DateUtc))) { $failedHistory = @() }
     $lastRecorderState = if ($samples.Count -gt 0) { [string](Get-WudReviewProperty $samples[$samples.Count - 1] 'RecorderState') } else { $null }
+    $reportedSuccessHistory = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedHistory' @() | Where-Object { [string]$_.Operation -in @('1', 'Installation') -and (Get-WudOperationResultLabel $_.ResultCode) -eq 'Succeeded' })
+    $reportedSuccessLogs = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object { $_.Boundary -in @('InstallReportedSucceeded', 'DeploymentReportedSucceeded') })
+    $reportedSuccess = $reportedSuccessHistory.Count -gt 0 -or $reportedSuccessLogs.Count -gt 0
     $attemptOutcome = if ($rollbackMarker) { 'RolledBack' }
         elseif ($targetPresent -and $buildTransition -eq 'Observed') { 'Succeeded' }
         elseif ($failedHistory.Count -gt 0) { 'Failed' }
         elseif ($targetInProgress -or (@($EligibleAttempts).Count -gt 0 -and $lastRecorderState -in @('SetupActive', 'SetupDownlevel', 'SetupSafeOS', 'SetupFirstBoot', 'SetupOOBE', 'RebootPending'))) { 'InProgress' }
+        elseif ($targetPresent -and $reportedSuccess) { 'WindowsUpdateReportedSucceeded' }
         else { 'NotObserved' }
     $outcome = switch ($attemptOutcome) {
         'Succeeded' { 'Upgrade Succeeded' }
         'RolledBack' { 'Rolled Back' }
         'Failed' { 'Failed' }
         'InProgress' { 'Upgrade In Progress' }
+        'WindowsUpdateReportedSucceeded' { 'Windows Update Reported Success' }
         default {
             if ($targetPresent) { 'Target OS Present' }
             elseif ($Context.Mode -eq 'Preflight') { 'Monitoring Armed' }
@@ -803,6 +816,8 @@ function Get-WudUpgradeStatusModel {
         OutcomeBanner = $outcome
         TargetPresent = $targetPresent
         WindowsUpdateEvidenceConfirmed = $windowsUpdateConfirmed
+        WindowsUpdateReportedSuccess = $reportedSuccess
+        SuccessEvidence = @($reportedSuccessHistory | ForEach-Object { [pscustomobject]@{ TimestampUtc = $_.DateUtc; SourceRef = $_.SourceRef; Meaning = 'Installation-operation history reported success, not an exact phase boundary.' } }) + @($reportedSuccessLogs | ForEach-Object { [pscustomobject]@{ TimestampUtc = $_.TimestampUtc; SourceRef = $_.SourceRef; Meaning = 'Exact-identity source record reported success; query time is not necessarily completion time.' } })
         ObservedBuilds = @($observedBuilds)
     }
 }
@@ -931,11 +946,11 @@ function Invoke-WudFactAnalysis {
 
     Add-WudSetupDiagFacts -Context $Context -Attempts @($Context.Attempts)
     foreach ($event in @($Context.UpgradeTracking.MatchedEvents)) {
-        $fact = Add-WudReviewFact -Context $Context -FactType SourceReported -Category 'TargetUpdateLifecycle' -Statement ("Windows Update reported {0} for the locked target upgrade identity." -f $event.Boundary) -Value ([pscustomobject]@{ UpdateID = $event.UpdateID; RevisionNumber = $event.RevisionNumber; ServiceID = $event.ServiceID; EventId = $event.EventId; Boundary = $event.Boundary }) -TimestampUtc $event.TimestampUtc -SourceRef $event.SourceRef -Excerpt $event.RawXml
+        $fact = Add-WudReviewFact -Context $Context -FactType SourceReported -Category 'TargetUpdateLifecycle' -Statement ("Windows Update source record: {0} for the locked target upgrade identity." -f $event.Boundary) -Value ([pscustomobject]@{ UpdateID = $event.UpdateID; RevisionNumber = $event.RevisionNumber; ServiceID = $event.ServiceID; EventId = $event.EventId; Boundary = $event.Boundary; TimestampKind = Get-WudReviewProperty $event 'TimestampKind' 'SourceEventUtc'; RuleId = Get-WudReviewProperty $event 'RuleId' }) -TimestampUtc $event.TimestampUtc -SourceRef $event.SourceRef -Excerpt (Get-WudReviewProperty $event 'Excerpt' $event.RawXml)
         $null = $Context.Timeline.Add([pscustomobject][ordered]@{
             TimestampUtc = $event.TimestampUtc; AttemptId = $null; FactId = $fact.FactId; EventType = 'TargetUpdateLifecycle'
             Code = $null; Phase = $event.Boundary; Operation = $null; Message = $event.Title; EvidenceReference = $event.SourceRef
-            UpdateID = $event.UpdateID; RevisionNumber = $event.RevisionNumber; ScopeStatus = 'Included'; TimingKind = 'SourceEvent'
+            UpdateID = $event.UpdateID; RevisionNumber = $event.RevisionNumber; ScopeStatus = 'Included'; TimingKind = Get-WudReviewProperty $event 'SourceKind' 'SourceEvent'
         })
     }
 
@@ -1079,6 +1094,7 @@ function Export-WudReviewBundle {
     Write-WudJsonAtomic -Path (Join-Path $staging 'Case.json') -InputObject $case -Depth 20
     Write-WudJsonAtomic -Path (Join-Path $staging 'UpgradeIdentity.json') -InputObject (Get-WudReviewProperty $Context.UpgradeTracking 'Identity') -Depth 20
     Write-WudJsonAtomic -Path (Join-Path $staging 'UpgradeTiming.json') -InputObject $Context.UpgradeTiming -Depth 25
+    Write-WudJsonAtomic -Path (Join-Path $staging 'WindowsUpdateLogCoverage.json') -InputObject (Get-WudReviewProperty $Context.UpgradeTracking 'LogCoverage' @()) -Depth 15
     $traceCoverage = @(Get-ChildItem -LiteralPath $Context.EvidencePath -File -Recurse -Filter 'ETLCoverage.json' -ErrorAction SilentlyContinue | ForEach-Object {
         [pscustomobject]@{ EvidenceRef = (Get-WudRelativePath -BasePath $Context.EvidencePath -Path $_.FullName).Replace('\', '/'); Coverage = Read-WudJson $_.FullName }
     })
@@ -1128,7 +1144,7 @@ function Export-WudReviewBundle {
     Write-WudJsonLines -Path (Join-Path $staging 'EvidenceIndex.jsonl') -Records @($evidenceIndex)
 
     $readMe = @'
-# WUPA — external review bundle
+# WUPA - external review bundle
 
 This archive is sensitive. It can contain device names, users, domains, paths, network identifiers, serial numbers, software inventory, and bounded log excerpts.
 

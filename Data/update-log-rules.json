@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 1,
+  "GrammarVersion": "1.0.0",
+  "Rules": [
+    { "Id": "WUText.DeploymentSuccess", "Pattern": "(?i)(?:QueryUpdateDeploymentStatusInternal|final deployment status).*callback\\s*code\\s*=\\s*Update success|(?:QueryUpdateDeploymentStatusInternal|final deployment status).*callbackCode\\s*=\\s*Update success", "Boundary": "DeploymentReportedSucceeded", "RequireZeroCode": true },
+    { "Id": "WUText.DownloadStart", "Pattern": "(?i)\\bDownload started for update\\b|\\bDownloadManager\\s+Downloading update\\b", "Boundary": "DownloadStarted", "RequireZeroCode": false },
+    { "Id": "WUText.DownloadEnd", "Pattern": "(?i)\\bDownload completed for update\\b", "Boundary": "DownloadCompleted", "RequireZeroCode": false },
+    { "Id": "WUText.InstallStart", "Pattern": "(?i)\\bInstallation started for update\\b", "Boundary": "InstallStarted", "RequireZeroCode": false },
+    { "Id": "WUText.InstallSuccess", "Pattern": "(?i)\\bInstallation succeeded for update\\b", "Boundary": "InstallReportedSucceeded", "RequireZeroCode": false },
+    { "Id": "WUText.InstallFailure", "Pattern": "(?i)\\bInstallation failed for update\\b", "Boundary": "InstallReportedFailed", "RequireZeroCode": false }
+  ]
+}

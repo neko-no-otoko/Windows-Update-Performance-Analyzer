@@ -44,7 +44,7 @@ internal sealed partial class MainForm
     }
 
     private bool CanMigrate(ActiveRunInfo active) => active.SchemaVersion == 2 &&
-        (_installedUpdate is null ? new[] { "3.0.0", "3.1.0", "3.1.1", "3.2.0" }.Contains(active.ToolVersion) :
+        (_installedUpdate is null ? new[] { "3.0.0", "3.1.0", "3.1.1", "3.2.0", "3.2.1" }.Contains(active.ToolVersion) :
             _installedUpdate.Manifest.StateSchemas.Contains(active.SchemaVersion) && _installedUpdate.Manifest.CompatiblePreviousEngines.Contains(active.ToolVersion));
 
     private void RefreshUpdateControls()

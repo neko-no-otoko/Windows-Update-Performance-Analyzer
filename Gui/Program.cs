@@ -31,7 +31,7 @@ internal static class Program
 
 internal sealed partial class MainForm : Form
 {
-    internal const string AppVersion = "3.2.0";
+    internal const string AppVersion = "3.2.1";
     private const int TargetBuild = 26200;
     private readonly Label _status = new();
     private readonly Label _statusDetail = new();
@@ -333,8 +333,16 @@ internal sealed partial class MainForm : Form
             {
                 if (result.RunLockCollision) { ShowAutomaticFinalization(activeAfter ?? activeBefore, true); return; }
                 if (result.ExitCode is not (0 or 10 or 20 or 30)) throw new InvalidOperationException($"Collector failed with code {result.ExitCode}. {result.LastMessage}");
-                var report = FindLatestReport(_actionStartedUtc.AddSeconds(-5));
-                if (report is null) throw new InvalidOperationException(result.LastMessage ?? $"The collector exited with code {result.ExitCode} without creating a report.");
+                string? report;
+                if (result.ReportPath is { } declaredReport)
+                {
+                    _lastOutputPath = Path.GetDirectoryName(declaredReport);
+                    var validationError = ReportCompletion.ValidationError(declaredReport);
+                    if (validationError is not null) throw new InvalidOperationException($"Collection exited with code {result.ExitCode}, but the report failed completion verification: {validationError}\n\nReport: {declaredReport}\nEvidence has been retained. Do not repeat the upgrade.");
+                    report = declaredReport;
+                }
+                else report = FindLatestReport(_actionStartedUtc.AddSeconds(-5));
+                if (report is null) throw new InvalidOperationException($"Collection exited with code {result.ExitCode}, but no finalized report could be located. Review Collector.log for the Report complete path. Evidence has been retained.");
                 _lastOutputPath = Path.GetDirectoryName(report);
                 SetStatus(result.ExitCode >= 30 ? "Report created with evidence gaps" : "Report ready", report, result.ExitCode >= 30);
                 if (MessageBox.Show(this, $"WUPA finished with exit code {result.ExitCode}.\n\nOpen the report now?", "Report ready", MessageBoxButtons.YesNo, result.ExitCode >= 30 ? MessageBoxIcon.Warning : MessageBoxIcon.Information) == DialogResult.Yes) OpenPath(report);
@@ -480,11 +488,7 @@ internal sealed partial class MainForm : Form
 
     private string? FindLatestReport(DateTime? notBeforeUtc = null)
     {
-        if (!string.IsNullOrWhiteSpace(_lastOutputPath)) { var known = Path.Combine(_lastOutputPath, "Report.html"); if (ReportCompletion.IsComplete(known) && (!notBeforeUtc.HasValue || File.GetLastWriteTimeUtc(known) >= notBeforeUtc.Value)) return known; }
-        var parent = GetPublicDocuments();
-        if (!Directory.Exists(parent)) return null;
-        try { return Directory.EnumerateFiles(parent, "Report.html", SearchOption.AllDirectories).Select(path => new FileInfo(path)).Where(file => file.Directory?.Name.StartsWith("WUPA-", StringComparison.OrdinalIgnoreCase) == true).Where(file => !notBeforeUtc.HasValue || file.LastWriteTimeUtc >= notBeforeUtc.Value).OrderByDescending(file => file.LastWriteTimeUtc).FirstOrDefault(file => ReportCompletion.IsComplete(file.FullName))?.FullName; }
-        catch { return null; }
+        return ReportLocator.Find(GetPublicDocuments(), _lastOutputPath, notBeforeUtc);
     }
 
     private static int CurrentBuild() { try { using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"); return int.TryParse(key?.GetValue("CurrentBuild")?.ToString(), out var build) ? build : Environment.OSVersion.Version.Build; } catch { return Environment.OSVersion.Version.Build; } }
@@ -559,6 +563,7 @@ internal sealed class BackendExecutionResult
     public int ExitCode { get; }
     public IReadOnlyList<string> Lines { get; }
     public bool RunLockCollision => Lines.Any(line => line.Contains("already handling this run", StringComparison.OrdinalIgnoreCase));
+    public string? ReportPath => Lines.Select(line => System.Text.RegularExpressions.Regex.Match(line, @"(?:^|\[INFO\]\s+)Report complete:\s*(.+\.html)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)).LastOrDefault(match => match.Success)?.Groups[1].Value.Trim();
     public string? LastMessage => Lines.LastOrDefault(line => line.Contains("Fatal tool failure:", StringComparison.OrdinalIgnoreCase) || line.Contains("modules could not be loaded", StringComparison.OrdinalIgnoreCase) || line.Contains("integrity check failed", StringComparison.OrdinalIgnoreCase)) ?? Lines.LastOrDefault(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("Collector exited with code ", StringComparison.Ordinal));
     public BackendExecutionResult(int exitCode, IReadOnlyList<string> lines) { ExitCode = exitCode; Lines = lines; }
 }

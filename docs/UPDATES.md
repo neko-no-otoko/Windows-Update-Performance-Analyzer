@@ -4,6 +4,16 @@ WUPA 3.2 still ships as one architecture-specific portable EXE, with an embedded
 
 ## Operator workflow
 
+### Testing the 3.2.0 to 3.2.1 update
+
+1. Open your existing 3.2.0 EXE elevated and click **Check for updates**. After it finds 3.2.1, click **Update available: 3.2.1 — apply update**.
+2. Approve downloading the replacement EXE, then approve opening it. The 3.2.0 source EXE/network share remains unchanged. This release requires GUI 3.2.1; a small engine ZIP alone cannot fix its report lookup.
+3. Confirm the new window says WUPA 3.2.1. For an active case, use **Apply engine 3.2.1 to this active run** and wait for verified restart. Never finish/cancel an in-progress upgrade just to update WUPA.
+4. On an already-upgraded device, use **Create report from existing logs**. Retained current/Windows.old ETLs are decoded independently; the report distinguishes source-reported success from unobserved live transitions and absent boundaries. The older ETL grammar still requires real-device validation; no exact duration is promised if explicit boundaries are missing or unsupported.
+5. If GitHub/proxy/application control blocks the update, preserve evidence and share the update message. Manifest signing is not Windows Authenticode signing. No UTM/full upgrade replay is required for this updater check, and none is claimed.
+
+### General workflow
+
 1. Download/run 3.2.0 once. Older 3.1.1 binaries have no updater.
 2. An eight-second-bounded check runs on GUI startup; **Check for updates** retries explicitly. Collection remains available offline. Checks have no SYSTEM task or background service.
 3. **Update available — apply update** asks approval before downloading authenticated code. Engine updates stage locally in a new immutable version folder; future GUI collection uses that engine.

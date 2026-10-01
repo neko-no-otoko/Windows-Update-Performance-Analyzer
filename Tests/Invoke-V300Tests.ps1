@@ -42,7 +42,7 @@ Assert-WupaV300 ([int]$settings.recorder.sampleIntervalSeconds -eq 60 -and [int]
 Assert-WupaV300 ($recorder -match 'Get-WudNativeTraceSources' -and $recorder -match 'MaximumCheckpointBytes' -and $recorder -notmatch "EventLogs'\)") 'Boundary checkpoints preserve bounded native ETLs without duplicating event-channel exports'
 Assert-WupaV300 ($persistence -match "ProgramData 'WUPA'" -and $persistence -match "'\\WUPA\\'" -and $persistence -match '-Action Resume') 'Durable state and cross-reboot tasks use the WUPA lifecycle'
 
-Assert-WupaV300 ($report -match 'Windows Update Performance Analyzer · fact-only evidence' -and $report -match 'WUPA is an independent, diagnostic-only utility') 'Report uses the WUPA brand and factual interpretation boundary'
+Assert-WupaV300 ($report -match 'Windows Update Performance Analyzer &middot; fact-only evidence' -and $report -match 'WUPA is an independent, diagnostic-only utility') 'Report uses the WUPA brand and factual interpretation boundary with ANSI-safe punctuation'
 Assert-WupaV300 ($readme -match ('WUPA-' + [Regex]::Escape($version) + '-win-x64\.exe') -and $readme -match 'no settings page' -and $readme -match 'Windows\\Panther.*excluded') 'Operator documentation matches the simplified executable workflow and evidence safeguards'
 
 Write-Host 'All WUPA v3.0.0 regression tests passed.' -ForegroundColor Cyan

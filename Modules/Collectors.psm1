@@ -550,10 +550,18 @@ function Invoke-WudRawEvidenceCollector {
         @{ Name = 'USOShared-Logs'; Path = (Join-Path $env:ProgramData 'USOShared\Logs') },
         @{ Name = 'DeliveryOptimization-Logs'; Path = (Join-Path $env:ProgramData 'Microsoft\Windows\DeliveryOptimization\Logs') },
         @{ Name = 'WindowsOld-Panther'; Path = (Join-Path $drive 'Windows.old\Windows\Panther') },
+        @{ Name = 'WindowsOld-System.evtx'; Path = (Join-Path $drive 'Windows.old\Windows\System32\winevt\Logs\System.evtx') },
+        @{ Name = 'WindowsOld-WindowsUpdateClient.evtx'; Path = (Join-Path $drive 'Windows.old\Windows\System32\winevt\Logs\Microsoft-Windows-WindowsUpdateClient%4Operational.evtx') },
         @{ Name = 'WUPA-SetupCopyLogs'; Path = (Join-Path $Context.RunPath 'SetupCopyLogs') },
         @{ Name = 'WUPA-Persistence-State'; Path = (Join-Path $Context.RunPath 'State\Persistence') },
         @{ Name = 'WUPA-Outcome-Markers'; Path = (Join-Path $Context.RunPath 'State\Markers') }
     )
+    # Post-upgrade Panther can contain the retained setup activity after ~BT
+    # is removed. Capture only known diagnostic files; strict scope analysis
+    # still rejects imaging/history. Do not sweep unattend answer files.
+    foreach ($relative in @('setupact.log', 'setuperr.log', 'miglog.xml', 'diagerr.xml', 'diagwrn.xml', 'UnattendGC/setupact.log', 'UnattendGC/setuperr.log')) {
+        $sources += @{ Name = 'Windows-Panther-Context/' + $relative; Path = Join-Path $windows ('Panther/' + $relative) }
+    }
     $operatorFinalizationPath = Join-Path $Context.RunPath 'State\operator-finalize.json'
     if ($Context.Mode -eq 'Finalize' -or (Test-Path -LiteralPath $operatorFinalizationPath)) {
         $sources += @{ Name = 'WUPA-Operator-Finalization'; Path = $operatorFinalizationPath }
@@ -571,7 +579,7 @@ function Invoke-WudRawEvidenceCollector {
     if ($Context.Mode -in @('Resume', 'Finalize', 'Forensic')) {
         $rawRoot = Join-Path $Context.SnapshotPath 'Raw'
         $coreSetupFiles = @(Get-ChildItem -LiteralPath $rawRoot -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
-            $_.FullName -match '(?i)WindowsBT-Panther|WindowsBT-Rollback|WindowsOld-Panther|SetupCopyLogs' -and
+            $_.FullName -match '(?i)WindowsBT-Panther|WindowsBT-Rollback|WindowsOld-Panther|Windows-Panther-Context|SetupCopyLogs' -and
             $_.Name -match '(?i)^setup(?:act|err)|CompatData|CompatReport|BlueBox|setupmem|miglog|setuperr'
         })
         if (@($coreSetupFiles).Count -eq 0) {
@@ -581,22 +589,47 @@ function Invoke-WudRawEvidenceCollector {
     Write-WudJsonAtomic -Path (Join-Path $Context.SnapshotPath 'raw-copy-results.json') -InputObject ([pscustomobject]@{ Sources = @($copyResults); MemoryDump = [pscustomobject]@{ CollectionStatus = 'ExcludedByDesign'; Reason = 'Full memory dumps are outside the focused Windows Update performance evidence profile.' } })
 }
 
-function Invoke-WudWindowsUpdateLogCollector {
+function Invoke-WudWindowsUpdateLogDecode {
     param($Context)
     $path = New-WudDirectory -Path (Join-Path $Context.SnapshotPath 'WindowsUpdate')
-    $logPath = Join-Path $path 'WindowsUpdate.log'
-    $escaped = $logPath.Replace("'", "''")
-    $etlRoot = Join-Path $Context.SnapshotPath 'Raw/WindowsUpdate-ETL'
-    $escapedRoot = $etlRoot.Replace("'", "''")
-    $script = "`$etlFiles = @(Get-ChildItem -LiteralPath '$escapedRoot' -File -Recurse -Filter '*.etl' -ErrorAction Stop | ForEach-Object { `$_.FullName }); if (`$etlFiles.Count -eq 0) { throw 'No captured Windows Update ETL inputs are available.' }; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null"
-    Write-WudJsonAtomic -Path (Join-Path $path 'conversion-inputs.json') -InputObject ([pscustomobject]@{
-        Provider = 'Get-WindowsUpdateLog'; Source = 'CapturedSnapshot'; InputRoot = $etlRoot
-        Files = @(Get-ChildItem -LiteralPath $etlRoot -File -Recurse -Filter '*.etl' -ErrorAction SilentlyContinue | ForEach-Object { Get-WudRelativePath -BasePath $Context.EvidencePath -Path $_.FullName })
-        Note = 'Only the staged snapshot is decoded. Rotated .etl.old/.bak/numeric names remain raw evidence. No service flush is requested.'
-    })
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $null = Invoke-WudProcess -Context $Context -FilePath $powerShell -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $script) -Name 'convert-windows-update-log' -TimeoutSeconds ([int]$Context.Settings.timeoutsSeconds.windowsUpdateLog) -ExpectedArtifacts @($logPath)
+    $conversions = New-Object Collections.ArrayList
+    foreach ($plan in @(Get-WudWindowsUpdateConversionPlan $Context)) {
+        $record = [pscustomobject]@{ Provider = 'Get-WindowsUpdateLog'; Source = 'CapturedSnapshot'; Origin = $plan.Name; InputRoot = $plan.InputRoot; Files = @($plan.Files | ForEach-Object { Get-WudRelativePath $Context.EvidencePath $_.FullName }); Output = Get-WudRelativePath $Context.EvidencePath $plan.LogPath; Status = 'NoCapturedInputs'; Error = $null }
+        $null = $conversions.Add($record)
+        if (-not $plan.Files.Count) { continue }
+        # Owned scratch copies give rotated ETLs unique .etl names without
+        # changing native evidence or mixing source-OS and current-OS streams.
+        $scratch = New-WudDirectory (Join-Path $Context.RunPath ('DecodeScratch/' + [Guid]::NewGuid().ToString('N')))
+        try {
+            $inputs = New-Object Collections.ArrayList; $index = 0
+            foreach ($file in $plan.Files) {
+                $index++; $inputPath = Join-Path $scratch ('{0:D5}.etl' -f $index)
+                Copy-Item -LiteralPath $file.FullName -Destination $inputPath -ErrorAction Stop
+                $null = $inputs.Add($inputPath)
+            }
+            $inputsPath = Join-Path $scratch 'inputs.json'
+            Write-WudJsonAtomic $inputsPath @($inputs)
+            $escapedInputs = $inputsPath.Replace("'", "''"); $escaped = $plan.LogPath.Replace("'", "''")
+            $script = "`$etlFiles = Get-Content -LiteralPath '$escapedInputs' -Raw -Encoding UTF8 | ConvertFrom-Json; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null"
+            $result = Invoke-WudProcess -Context $Context -FilePath $powerShell -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $script) -Name ('convert-windows-update-log-' + $plan.Name) -TimeoutSeconds ([int]$Context.Settings.timeoutsSeconds.windowsUpdateLog) -ExpectedArtifacts @($plan.LogPath)
+            $record.Status = $result.ExecutionStatus; $record.Error = $result.Detail
+            if (-not $result.Succeeded) { $null = Add-WudCollectionGap -Context $Context -Collector 'windows-update-decode' -Source $plan.InputRoot -Status $record.Status -Detail $result.Detail -Impact 'Material' }
+        } catch {
+            $record.Status = 'Failed'; $record.Error = $_.Exception.Message
+            $null = Add-WudCollectionGap -Context $Context -Collector 'windows-update-decode' -Source $plan.InputRoot -Status 'Failed' -Detail $record.Error -Impact 'Material'
+        } finally {
+            # This exact UUID folder was created by this pass, not a user path.
+            Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-WudJsonAtomic (Join-Path $path 'conversion-inputs.json') ([pscustomobject]@{ Sets = @($conversions); Note = 'Current and Windows.old are decoded separately from staged evidence, including rotated ETLs. Originals are untouched; no flush or service changes are requested.' }) -Depth 15
+}
 
+function Invoke-WudWindowsUpdateLogCollector {
+    param($Context)
+    Invoke-WudWindowsUpdateLogDecode $Context
+    $path = New-WudDirectory -Path (Join-Path $Context.SnapshotPath 'WindowsUpdate')
     $do = $null
     if (Get-Command -Name 'Get-WudProgressSample' -ErrorAction SilentlyContinue) {
         $probe = Get-WudProgressSample -RunPath $Context.RunPath -TargetVersion $Context.TargetVersion -TargetBuild ([int]$Context.Target.buildFamily) -IncludeStaticDeliveryData
@@ -715,6 +748,9 @@ function Invoke-WudEventCollector {
     $created = Get-WudObjectPropertyValue $state 'CreatedUtc'
     if ($created) { $start = ([DateTimeOffset]::Parse($created)).UtcDateTime }
     $updateEvents = Get-WudUpdateEventRecords -StartTime $start -MaximumEvents 10000
+    $archivedEvents = Get-WudArchivedUpdateEventRecords -Context $Context -StartTime $start -MaximumEvents 10000
+    $updateEvents.Records = @($updateEvents.Records) + @($archivedEvents.Records)
+    $updateEvents.Providers = @($updateEvents.Providers) + @($archivedEvents.Providers)
     Write-WudJsonAtomic -Path (Join-Path $path 'update-lifecycle-events.json') -InputObject $updateEvents -Depth 15
     foreach ($provider in $updateEvents.Providers) {
         if ($provider.Status -in @('Failed', 'Truncated')) { $null = Add-WudCollectionGap -Context $Context -Collector 'update-events' -Source $provider.Channel -Status $provider.Status -Detail ('Update lifecycle event query: ' + $provider.Error) }

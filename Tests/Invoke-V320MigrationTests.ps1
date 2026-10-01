@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([ValidateSet('3.1.1', '3.2.0')][string]$PreviousEngine = '3.1.1')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $toolRoot = Split-Path -Parent $PSScriptRoot
@@ -10,7 +10,7 @@ $oldData = $env:ProgramData; $oldRoot = $env:SystemRoot
 try {
     $env:ProgramData = New-WudDirectory $fixture
     $env:SystemRoot = New-WudDirectory (Join-Path $fixture 'fake-windows')
-    $runtime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) 'Runtime/3.2.0')
+    $runtime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) 'Runtime/3.2.1')
     Copy-Item (Join-Path $toolRoot 'Data') $runtime -Recurse
     Copy-Item (Join-Path $toolRoot 'VERSION') $runtime
     $module = Get-Module RuntimeUpdate
@@ -31,16 +31,16 @@ try {
         function script:Stop-WudRecorderTask { param($State) return [pscustomobject]@{ Status = 'Stopped'; Error = $null } }
         function script:Start-WudRecorderTask {
             param($State)
-            if ($script:FailRestart -and $State.ToolVersion -eq '3.2.0') { return [pscustomobject]@{ Status = 'StartUnverified'; Error = 'Injected restart failure.' } }
+            if ($script:FailRestart -and $State.ToolVersion -eq '3.2.1') { return [pscustomobject]@{ Status = 'StartUnverified'; Error = 'Injected restart failure.' } }
             return [pscustomobject]@{ Status = 'Started'; Error = $null }
         }
     }
     foreach ($scenario in @('Success', 'BusyCollector', 'RegistrationFailure', 'RestartFailure', 'OldProcess', 'UnsupportedSchema', 'PendingRecovery', 'PendingNewState', 'ForeignTask')) {
         $run = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) ("Runs/{0}" -f $scenario))
         $null = New-WudDirectory (Join-Path $run 'State')
-        $oldRuntime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) 'Runtime/3.1.1')
+        $oldRuntime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) ('Runtime/' + $PreviousEngine))
         $state = [pscustomobject][ordered]@{
-            SchemaVersion = 2; ToolVersion = '3.1.1'; RunId = $scenario; RunPath = $run; RuntimePath = $oldRuntime
+            SchemaVersion = 2; ToolVersion = $PreviousEngine; RunId = $scenario; RunPath = $run; RuntimePath = $oldRuntime
             OutputPath = (Join-Path $fixture ("out/{0}" -f $scenario)); TargetVersion = '25H2'; TargetBuild = 26200
             Status = 'Armed'; CopyTo = $null; StatePath = (Join-Path $run 'State/run-state.json')
             CreatedUtc = '2026-10-01T09:00:00Z'; ExpiresUtc = '2026-10-31T09:00:00Z'
@@ -74,7 +74,7 @@ try {
             if ($scenario -eq 'PendingNewState') {
                 & $module { param($s, $r) Set-WudOwnedTaskRuntime (Get-WudOwnedTaskXml $s Recorder) $r } $state $runtime
                 $changedState = ConvertFrom-WudJsonText ($state | ConvertTo-Json -Depth 40)
-                $changedState.ToolVersion = '3.2.0'; $changedState.RuntimePath = $runtime
+                $changedState.ToolVersion = '3.2.1'; $changedState.RuntimePath = $runtime
                 Write-WudJsonAtomic (Join-Path (Get-WudProgramDataRoot) 'ActiveRun.json') $changedState
                 Write-WudJsonAtomic $state.StatePath $changedState
             }
@@ -88,14 +88,14 @@ try {
         $current = Get-WudActiveRunState
         $tasks = & $module { return $script:Tasks.Clone() }
         if ($scenario -in @('Success', 'PendingRecovery', 'PendingNewState')) {
-            Assert-Migration320 (-not $failed -and $current.ToolVersion -eq '3.2.0' -and $current.RuntimePath -eq $runtime) "$scenario migrates the existing state rather than creating a new run"
+            Assert-Migration320 (-not $failed -and $current.ToolVersion -eq '3.2.1' -and $current.RuntimePath -eq $runtime) "$scenario migrates the existing state rather than creating a new run"
             Assert-Migration320 ($tasks["Resume-$scenario"].Contains($runtime) -and $tasks["Recorder-$scenario"].Contains($runtime)) "$scenario updates both owned task actions"
             Assert-Migration320 ($tasks["Resume-$scenario"].Contains('<BootTrigger>')) "$scenario preserves existing task triggers"
             $journal = Read-WudJson $current.RuntimeUpdateJournal
             Assert-Migration320 ($journal.Status -eq 'Completed' -and $journal.PauseStartedUtc -and $journal.ResumeVerifiedUtc) "$scenario records the sampling interruption and verified restart"
         }
         else {
-            Assert-Migration320 ($failed -and $current.ToolVersion -eq '3.1.1') "$scenario refuses or rolls back instead of silently committing"
+            Assert-Migration320 ($failed -and $current.ToolVersion -eq $PreviousEngine) "$scenario refuses or rolls back instead of silently committing"
             if ($scenario -ne 'ForeignTask') { Assert-Migration320 ($tasks["Resume-$scenario"] -eq $xmls["Resume-$scenario"] -and $tasks["Recorder-$scenario"] -eq $xmls["Recorder-$scenario"]) "$scenario retains/restores exact original task definitions" }
         }
         Assert-Migration320 ((Get-WudFileHashSafe $samplePath) -eq $sampleHash -and (Get-WudFileHashSafe $baseline) -eq $baselineHash -and $current.RunId -eq $scenario) "$scenario retains samples, baseline and RunId byte-for-byte"

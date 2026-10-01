@@ -64,7 +64,7 @@ function New-WudDirectory {
 function Read-WudJson {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    return ConvertFrom-WudJsonText -Text (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop)
+    return ConvertFrom-WudJsonText -Text (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop)
 }
 
 function ConvertFrom-WudJsonText {

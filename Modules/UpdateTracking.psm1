@@ -101,6 +101,32 @@ function Get-WudUpdateEventRecords {
     return [pscustomobject]@{ Records = @($records | Sort-Object TimestampUtc); Providers = @($providers) }
 }
 
+function Get-WudArchivedUpdateEventRecords {
+    param($Context, [DateTime]$StartTime, [int]$MaximumEvents = 10000)
+    $records = New-Object Collections.ArrayList; $providers = New-Object Collections.ArrayList
+    foreach ($name in @('WindowsOld-System.evtx', 'WindowsOld-WindowsUpdateClient.evtx')) {
+        $path = Join-Path $Context.SnapshotPath ('Raw/' + $name)
+        $relative = (Get-WudRelativePath $Context.EvidencePath $path).Replace('\', '/')
+        if (-not (Test-Path -LiteralPath $path)) { $null = $providers.Add([pscustomobject]@{ Channel = $relative; Status = 'ArchiveNotRetained'; Error = $null }); continue }
+        try {
+            $events = @(Get-WinEvent -FilterHashtable @{ Path = $path; ProviderName = 'Microsoft-Windows-WindowsUpdateClient'; StartTime = $StartTime; EndTime = [DateTime]::UtcNow } -MaxEvents ($MaximumEvents + 1) -ErrorAction Stop)
+            foreach ($event in @($events | Select-Object -First $MaximumEvents)) {
+                $record = ConvertFrom-WudUpdateEventXml -Xml $event.ToXml() -SourceRef ("${relative}#RecordId=$($event.RecordId)")
+                if (-not $record) { continue }
+                $record.Channel = 'WindowsOld/' + $record.Channel
+                $record | Add-Member -NotePropertyName SourceKind -NotePropertyValue 'ArchivedEvent'
+                $record | Add-Member -NotePropertyName TimingStream -NotePropertyValue 'WindowsOldNativeEvents'
+                $null = $records.Add($record)
+            }
+            $null = $providers.Add([pscustomobject]@{ Channel = $relative; Status = if ($events.Count -gt $MaximumEvents) { 'Truncated' } else { 'Available' }; Error = $null })
+        } catch {
+            $empty = $_.FullyQualifiedErrorId -match 'NoMatchingEventsFound'
+            $null = $providers.Add([pscustomobject]@{ Channel = $relative; Status = if ($empty) { 'AvailableEmpty' } else { 'Failed' }; Error = if ($empty) { $null } else { Get-WudErrorDetail $_ } })
+        }
+    }
+    [pscustomobject]@{ Records = @($records); Providers = @($providers) }
+}
+
 function Resolve-WudUpgradeIdentity {
     param($Records = @(), [string]$TargetVersion = '25H2', $ExistingLock)
     $existingId = ConvertTo-WudUpdateGuid (Get-WudObjectPropertyValue $ExistingLock 'UpdateID')
@@ -171,4 +197,82 @@ function Update-WudUpgradeTracking {
     return [pscustomobject]@{ Identity = $identity; Providers = $query.Providers; MatchedBoundaries = @($query.Records | Where-Object { Test-WudUpgradeIdentityMatch $_ $identity } | Select-Object TimestampUtc, UpdateID, RevisionNumber, Boundary, SourceRef) }
 }
 
-Export-ModuleMember -Function @('Test-WudTargetUpgradeTitle', 'ConvertTo-WudUpdateGuid', 'ConvertFrom-WudUpdateEventXml', 'Get-WudUpdateEventRecords', 'Resolve-WudUpgradeIdentity', 'Test-WudUpgradeIdentityMatch', 'Update-WudUpgradeTracking')
+function Get-WudWindowsUpdateConversionPlan {
+    param($Context)
+    foreach ($set in @(
+        @{ Name = 'Current'; Root = 'WindowsUpdate-ETL'; Log = 'WindowsUpdate.log' },
+        @{ Name = 'WindowsOld'; Root = 'WindowsOld-WindowsUpdate-ETL'; Log = 'WindowsUpdate.WindowsOld.log' }
+    )) {
+        $root = Join-Path $Context.SnapshotPath ('Raw/' + $set.Root)
+        $files = @(Get-ChildItem -LiteralPath $root -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)\.etl(?:\.(?:old|bak|\d+))*$' } | Sort-Object FullName)
+        [pscustomobject]@{ Name = $set.Name; InputRoot = $root; Files = $files; LogPath = Join-Path $Context.SnapshotPath ('WindowsUpdate/' + $set.Log) }
+    }
+}
+
+function ConvertFrom-WudWindowsUpdateLogLine {
+    param([string]$Line, [string]$SourceRef, [string]$TimeZoneId, [string]$Stream, $Rules)
+    # An explicit GUID AND revision on the SAME line is required. GUID-less
+    # neighboring lines, cached flags, payload file IDs and thread IDs are not joins.
+    $ids = @([Regex]::Matches($Line, '(?i)(?<id>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.(?<rev>\d+)') | ForEach-Object { '{0}|{1}' -f $_.Groups['id'].Value.ToLowerInvariant(), $_.Groups['rev'].Value } | Select-Object -Unique)
+    if ($ids.Count -ne 1) { return $null }
+    if ($Line -notmatch '^(?<stamp>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})(?:\.(?<fraction>\d+))?\s') { return $null }
+    $fraction = $matches['fraction']; if (-not $fraction) { $fraction = '' }
+    $stamp = $matches['stamp'] + '.' + $fraction.PadRight(7, '0').Substring(0, 7)
+    $local = [DateTime]::SpecifyKind([DateTime]::ParseExact($stamp, 'yyyy/MM/dd HH:mm:ss.fffffff', [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Unspecified)
+    $utc = $null; $timeStatus = 'TimeZoneUnavailable'
+    try {
+        if ($TimeZoneId) {
+            $zone = [TimeZoneInfo]::FindSystemTimeZoneById($TimeZoneId)
+            if ($zone.IsInvalidTime($local)) { $timeStatus = 'InvalidLocalTime' }
+            elseif ($zone.IsAmbiguousTime($local)) { $timeStatus = 'AmbiguousLocalTime' }
+            else { $utc = [TimeZoneInfo]::ConvertTimeToUtc($local, $zone).ToString('o'); $timeStatus = 'SourceLocalTimeNormalized' }
+        }
+    } catch { $timeStatus = 'TimeZoneUnavailable' }
+    $code = $null
+    $codes = @([Regex]::Matches($Line, '(?i)(?:error code|errCode|HRESULT)\s*=\s*(0x[0-9a-f]{8})') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant().Replace('0X', '0x') })
+    if ($codes.Count) { $code = $codes[0] }
+    $conflictingError = @($codes | Where-Object { $_ -ne '0x00000000' }).Count -gt 0
+    $boundary = 'UpdateLogContext'; $ruleId = 'WUText.ExactIdentityContext'
+    foreach ($rule in $Rules) {
+        if ($Line -match $rule.Pattern -and (-not $rule.RequireZeroCode -or ($code -eq '0x00000000' -and -not $conflictingError))) { $boundary = $rule.Boundary; $ruleId = $rule.Id; break }
+    }
+    $parts = $ids[0].Split('|')
+    [pscustomobject][ordered]@{
+        TimestampUtc = $utc; TimestampLocal = $local.ToString('yyyy-MM-ddTHH:mm:ss.fffffff'); TimeZoneId = $TimeZoneId; TimestampKind = $timeStatus
+        Provider = 'DecodedWindowsUpdateLog'; Channel = $Stream; RecordId = $SourceRef; EventId = $null
+        UpdateID = $parts[0]; RevisionNumber = [int]$parts[1]; ServiceID = $null; Title = $null
+        Boundary = $boundary; SourceKind = 'SourceLog'; TimingStream = $Stream; RuleId = $ruleId; HResultHex = $code
+        SourceRef = $SourceRef; Excerpt = $Line; RawXml = $null
+    }
+}
+
+function Read-WudWindowsUpdateLogRecords {
+    param($Context)
+    $records = New-Object Collections.ArrayList; $unresolved = New-Object Collections.ArrayList; $coverage = New-Object Collections.ArrayList
+    $catalog = Read-WudJson (Join-Path $Context.ToolRoot 'Data/update-log-rules.json')
+    $rules = $catalog.Rules
+    $zone = [string](Get-WudObjectPropertyValue $Context.Inventory['Identity'] 'TimeZone')
+    foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidencePath -Recurse -File -Filter 'WindowsUpdate*.log' -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'WindowsUpdate' })) {
+        $relative = (Get-WudRelativePath $Context.EvidencePath $file.FullName).Replace('\', '/')
+        $reader = $null; $lineNumber = 0; $bytes = 0L; $count = 0; $unknownTimes = 0; $status = 'Parsed'; $errorText = $null
+        try {
+            $reader = New-Object IO.StreamReader($file.FullName, [Text.Encoding]::UTF8, $true)
+            while (-not $reader.EndOfStream) {
+                $line = $reader.ReadLine(); $lineNumber++; $bytes += [Text.Encoding]::UTF8.GetByteCount($line)
+                if ($bytes -gt [long]$Context.Settings.maximumTextParseBytes -or $count -ge 20000) { $status = 'Truncated'; break }
+                $record = ConvertFrom-WudWindowsUpdateLogLine $line "${relative}:$lineNumber" $zone $relative $rules
+                if (-not $record) { continue }
+                $count++
+                if ($record.TimestampUtc) { $null = $records.Add($record) } else { $unknownTimes++; $null = $unresolved.Add($record) }
+            }
+        } catch { $status = 'Failed'; $errorText = $_.Exception.Message }
+        finally { if ($reader) { $reader.Dispose() } }
+        $null = $coverage.Add([pscustomobject]@{ SourceRef = $relative; Status = $status; ParsedLines = $lineNumber; ExactIdentityRecords = $count; UnresolvedTimestamps = $unknownTimes; TimeZoneId = $zone; Error = $errorText })
+        if ($status -ne 'Parsed' -or $unknownTimes) { $null = Add-WudCollectionGap -Context $Context -Collector 'update-log-parser' -Source $relative -Status $(if ($unknownTimes -and $status -eq 'Parsed') { 'UnresolvedTimestamps' } else { $status }) -Detail ('Decoded log parse/timestamp coverage is incomplete. ' + $errorText) -Impact 'Material' }
+    }
+    $result = [pscustomobject]@{ GrammarVersion = $catalog.GrammarVersion; Records = @($records); UnresolvedRecords = @($unresolved); Coverage = @($coverage); TimeNormalization = 'Captured device time zone is assumed to apply to source-local timestamps; historical time-zone changes cannot be inferred. Raw timestamp text is preserved in each excerpt.' }
+    Write-WudJsonAtomic (Join-Path $Context.SnapshotPath 'WindowsUpdate/windows-update-log-facts.json') $result -Depth 15
+    return $result
+}
+
+Export-ModuleMember -Function @('Test-WudTargetUpgradeTitle', 'ConvertTo-WudUpdateGuid', 'ConvertFrom-WudUpdateEventXml', 'Get-WudUpdateEventRecords', 'Get-WudArchivedUpdateEventRecords', 'Resolve-WudUpgradeIdentity', 'Test-WudUpgradeIdentityMatch', 'Update-WudUpgradeTracking', 'Get-WudWindowsUpdateConversionPlan', 'ConvertFrom-WudWindowsUpdateLogLine', 'Read-WudWindowsUpdateLogRecords')

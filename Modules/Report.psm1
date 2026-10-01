@@ -293,6 +293,7 @@ function New-WudSummaryObject {
         Recorder           = $Context.Recorder
         UpgradeIdentity    = Get-WudProperty $Context.UpgradeTracking 'Identity'
         UpgradeTiming      = $Context.UpgradeTiming
+        WindowsUpdateLogCoverage = Get-WudProperty $Context.UpgradeTracking 'LogCoverage' @()
         UpdateActivity     = $Context.UpdateActivity
         ExitCode           = $Context.ExitCode
         Device             = [pscustomobject][ordered]@{
@@ -372,8 +373,8 @@ function Get-WudOutcomeCssClass {
 
 function Build-WudReportHtml {
     param($Context, $Summary, $EvidenceManifest, $CollectorRecords)
-    $css = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.css') -Raw
-    $javascript = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.js') -Raw
+    $css = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.css') -Raw -Encoding UTF8
+    $javascript = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.js') -Raw -Encoding UTF8
     $builder = New-Object Text.StringBuilder
     $outcomeClass = Get-WudOutcomeCssClass -Outcome $Summary.Outcome
     $sourceDisplay = '{0} ({1}.{2})' -f $Summary.SourceOs.DisplayVersion, $Summary.SourceOs.Build, $Summary.SourceOs.UBR
@@ -571,8 +572,8 @@ function ConvertTo-WudFactDisplay {
 
 function Build-WudFactReportHtml {
     param($Context, $Summary, $EvidenceManifest, $CollectorRecords)
-    $css = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.css') -Raw
-    $javascript = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.js') -Raw
+    $css = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.css') -Raw -Encoding UTF8
+    $javascript = Get-Content -LiteralPath (Join-Path $Context.ToolRoot 'Assets/report.js') -Raw -Encoding UTF8
     $builder = New-Object Text.StringBuilder
     $nonceBytes = New-Object byte[] 18
     $random = New-Object Security.Cryptography.RNGCryptoServiceProvider
@@ -589,11 +590,11 @@ function Build-WudFactReportHtml {
     Add-WudHtmlLine $builder '<html lang="en"><head><meta charset="utf-8">'
     Add-WudHtmlLine $builder '<meta name="viewport" content="width=device-width,initial-scale=1">'
     Add-WudHtmlLine $builder ('<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; base-uri &#39;none&#39;; object-src &#39;none&#39;; form-action &#39;none&#39;; style-src &#39;nonce-{0}&#39;; script-src &#39;nonce-{0}&#39;; img-src data:; font-src data:">' -f $nonce)
-    Add-WudHtmlLine $builder ('<title>WUPA — {0} — {1}</title>' -f (ConvertTo-WudHtmlText $Summary.Device.ComputerName), (ConvertTo-WudHtmlText $Summary.Outcome))
+    Add-WudHtmlLine $builder ('<title>WUPA &mdash; {0} &mdash; {1}</title>' -f (ConvertTo-WudHtmlText $Summary.Device.ComputerName), (ConvertTo-WudHtmlText $Summary.Outcome))
     Add-WudHtmlLine $builder ('<style nonce="{0}">{1}</style></head><body>' -f $nonce, $css)
-    Add-WudHtmlLine $builder '<div class="sensitive-banner">SENSITIVE DIAGNOSTIC DATA — Contains device, user, domain, network, path, and native log identifiers.</div>'
+    Add-WudHtmlLine $builder '<div class="sensitive-banner">SENSITIVE DIAGNOSTIC DATA &mdash; Contains device, user, domain, network, path, and native log identifiers.</div>'
     Add-WudHtmlLine $builder '<nav class="topbar" aria-label="Report controls"><div class="brand"><span class="brand-mark">W</span><span>WUPA</span></div><div class="top-actions"><button id="theme-toggle" type="button">Theme</button><button id="print-report" type="button">Print / PDF</button></div></nav><main>'
-    Add-WudHtmlLine $builder ('<header class="hero {0}"><div class="eyebrow">Windows Update Performance Analyzer · fact-only evidence</div><h1>{1}</h1><span class="outcome-pill {0}">{2}</span><div class="hero-meta"><span><strong>Device:</strong> {3}</span><span><strong>Run:</strong> <code>{4}</code></span><span><strong>Completed:</strong> {5}</span></div></header>' -f $outcomeClass, (ConvertTo-WudHtmlText $Summary.Outcome), (ConvertTo-WudHtmlText $coverageText), (ConvertTo-WudHtmlText $Summary.Device.ComputerName), (ConvertTo-WudHtmlText $Summary.RunId), (ConvertTo-WudHtmlText $Summary.CompletedUtc))
+    Add-WudHtmlLine $builder ('<header class="hero {0}"><div class="eyebrow">Windows Update Performance Analyzer &middot; fact-only evidence</div><h1>{1}</h1><span class="outcome-pill {0}">{2}</span><div class="hero-meta"><span><strong>Device:</strong> {3}</span><span><strong>Run:</strong> <code>{4}</code></span><span><strong>Completed:</strong> {5}</span></div></header>' -f $outcomeClass, (ConvertTo-WudHtmlText $Summary.Outcome), (ConvertTo-WudHtmlText $coverageText), (ConvertTo-WudHtmlText $Summary.Device.ComputerName), (ConvertTo-WudHtmlText $Summary.RunId), (ConvertTo-WudHtmlText $Summary.CompletedUtc))
     Add-WudHtmlLine $builder '<section class="panel scope-notice"><h2>Interpretation boundary</h2><p>This report presents direct observations, source-reported results, deterministic code decodes, and transparent scope computations. It does <strong>not</strong> name a root cause or treat temporal proximity as causation.</p><p><strong>Scope rule:</strong> Update lifecycle events must match the locked target GUID/revision. Setup content must pass ownership, build, window, complete-parse, and contamination gates; setup linked only by build/time remains context. Recorder state changes do not prove why an interval was quiet or delayed.</p></section>'
     Add-WudHtmlLine $builder '<section class="summary-grid" aria-label="Case summary">'
     Add-WudHtmlLine $builder ('<div class="metric"><div class="metric-label">Current OS</div><div class="metric-value">{0} ({1}.{2})</div><div class="metric-detail">{3}</div></div>' -f (ConvertTo-WudHtmlText $Summary.CurrentOs.DisplayVersion), (ConvertTo-WudHtmlText $Summary.CurrentOs.Build), (ConvertTo-WudHtmlText $Summary.CurrentOs.UBR), (ConvertTo-WudHtmlText $Summary.CurrentOs.Edition))
@@ -607,6 +608,13 @@ function Build-WudFactReportHtml {
     Add-WudHtmlLine $builder '</tbody></table></div></section>'
 
     $recorder = Get-WudProperty $Summary 'Recorder'
+    Add-WudHtmlLine $builder '<section class="panel"><h2>Windows Update reported results</h2><p>Source-reported success is separate from a live-observed build transition. A result/query timestamp is not an exact installation or reboot completion boundary.</p>'
+    $successEvidence = @(Get-WudProperty $Summary.StatusModel 'SuccessEvidence' @())
+    if ($successEvidence.Count -eq 0) { Add-WudHtmlLine $builder '<p>No exact-identity success result was retained.</p>' }
+    foreach ($result in $successEvidence) { Add-WudHtmlLine $builder ('<p><strong>Reported success:</strong> {0} UTC<br><code>{1}</code><br>{2}</p>' -f (ConvertTo-WudHtmlText $result.TimestampUtc), (ConvertTo-WudHtmlText $result.SourceRef), (ConvertTo-WudHtmlText $result.Meaning)) }
+    Add-WudHtmlLine $builder '<h3>Decoded Windows Update log coverage</h3><p>Current and Windows.old streams are decoded separately. Source-local timestamps use the captured device time zone; historical time-zone changes cannot be inferred. Unknown grammars, missing timestamps and ambiguous local times cannot supply phase durations. No records in live event channels does not mean no retained ETL evidence.</p>'
+    foreach ($coverage in @(Get-WudProperty $Summary 'WindowsUpdateLogCoverage' @())) { Add-WudHtmlLine $builder ('<p><code>{0}</code>: {1}; {2} exact-identity records; {3} unresolved timestamps; time zone: {4}</p>' -f (ConvertTo-WudHtmlText $coverage.SourceRef), (ConvertTo-WudHtmlText $coverage.Status), $coverage.ExactIdentityRecords, $coverage.UnresolvedTimestamps, (ConvertTo-WudHtmlText $coverage.TimeZoneId)) }
+    Add-WudHtmlLine $builder '</section>'
     $upgradeIdentity = Get-WudProperty $Summary 'UpgradeIdentity'
     $upgradeTiming = Get-WudProperty $Summary 'UpgradeTiming'
     Add-WudHtmlLine $builder '<section class="panel"><h2>Target upgrade identity and phase timing</h2><p class="section-note">Only matching update GUIDs and revisions enter this phase table. Times from source events are exact log timestamps; observation bounds describe uncertainty. Elapsed time includes waits and pauses.</p>'
@@ -620,7 +628,7 @@ function Build-WudFactReportHtml {
     $activity = Get-WudProperty $Summary 'UpdateActivity'
     Add-WudHtmlLine $builder '<section class="panel"><h2>Activity by UpdateID</h2><p class="section-note">Each GUID and revision has independent download/install operations and results. Other update failures do not change the 25H2 outcome. Expand an update to inspect its boundaries and evidence.</p>'
     foreach ($update in @(Get-WudProperty $activity 'Updates' @())) {
-        Add-WudHtmlLine $builder ('<details class="finding-card"{0}><summary>{1} &mdash; {2}</summary><div class="finding-body"><p><strong>UpdateID:</strong> <code>{3}</code> &middot; <strong>Revision:</strong> {4} &middot; <strong>Service:</strong> <code>{5}</code></p><p>Latest event: {6} &middot; latest history result: {7} (operation {8}) &middot; {9} source events</p><div class="table-wrap"><table><thead><tr><th>Phase</th><th>Start UTC / type</th><th>End UTC / type</th><th>Elapsed seconds</th><th>Result</th><th>Evidence</th></tr></thead><tbody>' -f $(if ($update.Role -eq 'TargetUpgrade') { ' open' } else { '' }), (ConvertTo-WudHtmlText $update.Title), (ConvertTo-WudHtmlText $update.Role), (ConvertTo-WudHtmlText $update.UpdateID), (ConvertTo-WudHtmlText $update.RevisionNumber), (ConvertTo-WudHtmlText $update.ServiceID), (ConvertTo-WudHtmlText $update.LatestBoundary), (ConvertTo-WudHtmlText $update.HistoryResult), (ConvertTo-WudHtmlText $update.HistoryOperation), $update.EventCount)
+        Add-WudHtmlLine $builder ('<details class="finding-card"{0}><summary>{1} &mdash; {2}</summary><div class="finding-body"><p><strong>UpdateID:</strong> <code>{3}</code> &middot; <strong>Revision:</strong> {4} &middot; <strong>Service:</strong> <code>{5}</code></p><p>Latest source boundary: {6} &middot; latest history result: {7} (operation {8}) &middot; {9} native events / {10} decoded log records</p><div class="table-wrap"><table><thead><tr><th>Phase</th><th>Start UTC / type</th><th>End UTC / type</th><th>Elapsed seconds</th><th>Result</th><th>Evidence</th></tr></thead><tbody>' -f $(if ($update.Role -eq 'TargetUpgrade') { ' open' } else { '' }), (ConvertTo-WudHtmlText $update.Title), (ConvertTo-WudHtmlText $update.Role), (ConvertTo-WudHtmlText $update.UpdateID), (ConvertTo-WudHtmlText $update.RevisionNumber), (ConvertTo-WudHtmlText $update.ServiceID), (ConvertTo-WudHtmlText $update.LatestBoundary), (ConvertTo-WudHtmlText $update.HistoryResult), (ConvertTo-WudHtmlText $update.HistoryOperation), (Get-WudProperty $update 'NativeEventCount' $update.EventCount), (Get-WudProperty $update 'LogRecordCount' 0))
         foreach ($session in @($update.Timing.Sessions)) {
             Add-WudHtmlLine $builder ('<tr><td>{0}</td><td>{1}<br>{2}</td><td>{3}<br>{4}</td><td>{5}</td><td>{6}</td><td><code>{7}</code><br><code>{8}</code></td></tr>' -f (ConvertTo-WudHtmlText $session.Phase), (ConvertTo-WudHtmlText $session.StartUtc), (ConvertTo-WudHtmlText $session.StartKind), (ConvertTo-WudHtmlText $session.EndUtc), (ConvertTo-WudHtmlText $session.EndKind), (ConvertTo-WudHtmlText $session.ElapsedSeconds), (ConvertTo-WudHtmlText $session.Result), (ConvertTo-WudHtmlText $session.StartEvidenceRef), (ConvertTo-WudHtmlText $session.EndEvidenceRef))
         }
@@ -706,7 +714,7 @@ function Build-WudFactReportHtml {
         Add-WudHtmlLine $builder ('<tr><td>{0}</td><td>{1}</td><td>{2}</td><td>{3} ms</td><td>{4}</td></tr>' -f (ConvertTo-WudHtmlText (Get-WudProperty $record 'Id')), (ConvertTo-WudHtmlText (Get-WudProperty $record 'Status')), (ConvertTo-WudHtmlText (Get-WudProperty $record 'Required')), (ConvertTo-WudHtmlText (Get-WudProperty $record 'DurationMs')), (ConvertTo-WudHtmlText (Get-WudProperty $record 'Detail')))
     }
     Add-WudHtmlLine $builder '</tbody></table></div><h3>Recorded gaps</h3><ul class="compact-list">'
-    foreach ($gap in @($Context.CollectionGaps)) { Add-WudHtmlLine $builder ('<li><strong>{0}</strong> — {1}: {2}</li>' -f (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Status')), (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Source')), (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Detail'))) }
+    foreach ($gap in @($Context.CollectionGaps)) { Add-WudHtmlLine $builder ('<li><strong>{0}</strong> &mdash; {1}: {2}</li>' -f (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Status')), (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Source')), (ConvertTo-WudHtmlText (Get-WudProperty $gap 'Detail'))) }
     if (@($Context.CollectionGaps).Count -eq 0) { Add-WudHtmlLine $builder '<li>No collection gaps were recorded.</li>' }
     Add-WudHtmlLine $builder '</ul></section>'
 

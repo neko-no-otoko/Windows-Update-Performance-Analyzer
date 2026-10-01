@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$OutputPath, [string]$SigningKeyPath, [string]$MinimumAppVersion = '3.2.0')
+param([string]$OutputPath, [string]$SigningKeyPath, [string]$MinimumAppVersion = '3.2.1')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $toolRoot = Split-Path -Parent $PSScriptRoot

@@ -56,7 +56,7 @@ function Read-WudJsonLines {
         return [pscustomobject][ordered]@{ Records = @(); InvalidLines = @(); Path = $Path }
     }
     $lineNumber = 0
-    foreach ($line in @(Get-Content -LiteralPath $Path -ErrorAction Stop)) {
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction Stop)) {
         $lineNumber++
         if ([string]::IsNullOrWhiteSpace([string]$line)) { continue }
         try { $null = $records.Add((ConvertFrom-WudJsonText -Text $line)) }

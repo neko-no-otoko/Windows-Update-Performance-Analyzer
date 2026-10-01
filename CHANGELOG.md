@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.2.1 — 2026-10-01
+
+- Decode staged current and Windows.old Windows Update ETLs separately, including rotated ETLs using unique scratch names. Record conversion inputs/results; original evidence is untouched.
+- Read retained Windows.old System/WU event archives with file provenance. Capture known current Panther diagnostic files after ~BT cleanup; retain imaging/build/window/ownership gates and do not sweep answer files.
+- Add versioned, conservative exact-GUID/revision decoded-log rules, source-line provenance, captured-device time-zone normalization, and explicit missing/DST-ambiguous coverage. Unknown messages and cached flags never become phase boundaries; different log streams cannot be paired into invented durations.
+- Separate Windows Update reported success from a live-observed build transition and retain native-event versus decoded-log counts. Export direct log facts/coverage in evidence and the reviewer bundle.
+- Fix PS5 report punctuation/UTF8 JSON reads. Use the collector's returned report path, bounded nonrecursive discovery, and explicit checksum/manifest failure reasons.
+- Require GUI 3.2.1 for this signed update: 3.2.0 downloads a new portable EXE locally rather than pretending an engine ZIP updates GUI behavior.
+- Add retained-log, time-zone/DST, scope, report-locator and actual exporter/GUI-verification regression tests. Supplied device evidence is reviewed only locally, never committed or uploaded to CI.
+
 ## 3.2.0 — 2026-10-01
 
 - Fix fatal report export when focused raw-copy metadata excludes MEMORY.DMP without a Path field. Preserve excluded, absent, legacy and incomplete metadata accurately; report malformed metadata as coverage gaps rather than strict-mode crashes.

@@ -128,6 +128,8 @@ internal static class GuiLayoutTests
         if (state == "active-engine-update") Assert(Field<LinkLabel>(form, "_repairRun").Visible && primary.Text == "Finish tracking and build report", "Engine repair remains distinct from finalizing the case");
         var failure = new BackendExecutionResult(40, new[] { "[ERROR] Fatal tool failure: missing field fixture", "Collector exited with code 40" });
         Assert(failure.LastMessage!.Contains("missing field fixture"), "Fatal collector detail wins over a generic exit-code tail");
+        var completed = new BackendExecutionResult(0, new[] { @"2026-10-01T20:05:45Z [INFO] Report complete: C:\Users\Public\Documents\WUPA-case\Report.html", @"Artifacts: C:\Users\Public\Documents\WUPA-case", "Collector exited with code 0" });
+        Assert(completed.ReportPath == @"C:\Users\Public\Documents\WUPA-case\Report.html", "Exact returned report path wins over the Artifacts tail");
     }
 
     private static void ValidateLayout(MainForm form, string name)

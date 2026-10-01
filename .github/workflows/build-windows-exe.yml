@@ -46,6 +46,7 @@ jobs:
             './Tests/Invoke-UpgradeIdentityTests.ps1'
             './Tests/Invoke-V320ReportTests.ps1'
             './Tests/Invoke-V320MigrationTests.ps1'
+            './Tests/Invoke-V321RetainedTests.ps1'
           )
           foreach ($test in $tests) {
             & pwsh -NoProfile -File $test
@@ -61,6 +62,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PS5 real collector/export fixtures failed.' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 migration fixtures failed.' }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1 -PreviousEngine 3.2.0
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.0-to-3.2.1 migration fixtures failed.' }
+          $retainedOutput = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V321RetainedTests.ps1)
+          $retainedOutput | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 retained-log/timestamp fixtures failed.' }
+          $reportLine = $retainedOutput | Where-Object { $_ -like 'PASS: retained-log report fixture: *' } | Select-Object -Last 1
+          if (-not $reportLine) { throw 'No actual exported report path was returned by the PS5 fixture.' }
+          $exportedReport = $reportLine.Substring('PASS: retained-log report fixture: '.Length)
+          dotnet run --project ./Tests/UpdateCore.Tests/UpdateCore.Tests.csproj --configuration Release -- --verify-report $exportedReport
+          if ($LASTEXITCODE -ne 0) { throw 'Actual PS5 report failed the production GUI completion check.' }
 
       - name: Validate updater integrity and failure scenarios
         shell: pwsh
@@ -108,7 +119,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WUPA-3.2.0
+          name: WUPA-3.2.1
           path: |
             dist/*.exe
             dist/*.json
