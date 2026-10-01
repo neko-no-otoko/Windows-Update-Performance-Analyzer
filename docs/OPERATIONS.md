@@ -2,30 +2,32 @@
 
 ## Normal workflow
 
-1. Run the architecture-appropriate `WUPA-3.1.0-win-*.exe` as an administrator.
-2. Select **Start tracking the 25H2 update**.
+1. Run the architecture-appropriate `WUPA-3.1.1-win-*.exe` as an administrator.
+2. Select **Start tracking**.
 3. Do not begin the update until the app says **Ready for the 25H2 update**.
 4. Close the app if desired and run the update through the organization's existing system.
 5. WUPA samples progress every 60 seconds as SYSTEM and restarts its recorder at boot.
 6. A terminal setup/update result triggers delayed automatic final collection. Reopen WUPA to view status.
-7. Select **Finish and create report** only when an operator intentionally wants to stop tracking and capture the current state.
+7. Select **Finish tracking and build report** only when an operator intentionally wants to stop tracking and capture the current state. Later update activity will not be recorded.
 
 WUPA never starts the Windows upgrade.
 
 ## State-aware controls
 
-- No case and pre-25H2: **Start tracking the 25H2 update**.
-- Active case: **Finish and create report**.
-- Active automatic collection: primary action is disabled and the last `Collector.log` status is displayed.
-- 25H2 already installed: **Analyze the completed 25H2 update**.
-- Pre-25H2 after a failed attempt: **Analyze existing update logs**.
-- Active case: **Cancel tracking** removes owned persistence without creating a report.
+- No case and pre-25H2: **Start tracking**.
+- Active case: **Finish tracking and build report**.
+- Active collection or an unreadable run lock: finish/stop actions are disabled; check **Show collector log** for details.
+- 25H2 already installed: **Create report from existing logs**. This collects retained evidence; it does not prove a completed Windows Update upgrade or invent missing timings.
+- Pre-25H2 after a failed attempt: **Already attempted the update? Create a report from existing logs**.
+- Active case: **Stop tracking without a report** removes owned persistence without creating a report, after confirmation.
+- Completed reports: **Open latest completed report** / **Open report folder**, visible only when a report exists. The folder link opens Public Documents output, not staging.
+- Technical output: **Show collector log** / **Hide collector log**. **Open tracking files (ProgramData)** is available inside the expanded section while a case is active.
 
 ## Paths
 
 - Active pointer: `%ProgramData%\WUPA\ActiveRun.json`
 - Durable run: `%ProgramData%\WUPA\Runs\<RunId>`
-- Extracted runtime: `%ProgramData%\WUPA\Runtime\3.1.0`
+- Extracted runtime: `%ProgramData%\WUPA\Runtime\3.1.1`
 - Scheduled tasks: `\WUPA\Resume-<RunId>` and `\WUPA\Recorder-<RunId>`
 - Final output: `%PUBLIC%\Documents\WUPA-<Computer>-<RunId>`
 - Early startup log: `%PUBLIC%\Documents\WUPA-Launcher.log`

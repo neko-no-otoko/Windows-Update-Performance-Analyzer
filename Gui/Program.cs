@@ -31,17 +31,22 @@ internal static class Program
 
 internal sealed class MainForm : Form
 {
-    private const string AppVersion = "3.1.0";
+    private const string AppVersion = "3.1.1";
     private const int TargetBuild = 26200;
     private readonly Label _status = new();
     private readonly Label _statusDetail = new();
     private readonly Label _stage = new();
     private readonly Button _primary = new();
-    private readonly Button _analyze = new();
-    private readonly Button _openReport = new();
-    private readonly Button _openFolder = new();
-    private readonly Button _cancel = new();
-    private readonly Button _details = new();
+    private readonly LinkLabel _analyze = new();
+    private readonly LinkLabel _openReport = new();
+    private readonly LinkLabel _openFolder = new();
+    private readonly LinkLabel _cancel = new();
+    private readonly LinkLabel _details = new();
+    private readonly LinkLabel _trackingFiles = new();
+    private readonly Panel _viewport = new();
+    private readonly TableLayoutPanel _content = new();
+    private readonly FlowLayoutPanel _reportLinks = new();
+    private readonly TableLayoutPanel _title = new();
     private readonly TextBox _log = new();
     private readonly Panel _detailsPanel = new();
     private readonly System.Windows.Forms.Timer _timer = new();
@@ -50,43 +55,56 @@ internal sealed class MainForm : Form
     private string? _lastCollectorLine;
     private bool _busy;
     private bool _detailsVisible;
+    private bool _layingOut;
     private string _primaryAction = "Start";
     private DateTime _actionStartedUtc;
 
-    public MainForm()
+    public MainForm(bool prepareRuntime = true)
     {
         Text = $"WUPA {AppVersion}";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 560);
-        Size = new Size(820, 640);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96, 96);
+        MinimumSize = new Size(740, 600);
+        Size = new Size(860, 640);
         BackColor = Color.FromArgb(244, 247, 250);
         Font = new Font("Segoe UI", 9.5F);
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         BuildInterface();
-        Load += OnLoaded;
+        if (prepareRuntime) Load += OnLoaded;
         FormClosing += OnClosing;
     }
 
     private void BuildInterface()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 6 };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(root);
+        _viewport.Dock = DockStyle.Fill;
+        _viewport.AutoScroll = true;
+        Controls.Add(_viewport);
+        _content.AutoSize = true;
+        _content.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _content.ColumnCount = 1;
+        _content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _content.Margin = Padding.Empty;
+        _viewport.Controls.Add(_content);
+        _viewport.ClientSizeChanged += (_, _) => LayoutContent();
 
-        var heading = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(6, 38, 70), Padding = new Padding(16) };
-        var logo = new PictureBox { Location = new Point(14, 12), Size = new Size(62, 62), SizeMode = PictureBoxSizeMode.Zoom };
+        var heading = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, BackColor = Color.FromArgb(6, 38, 70), Padding = new Padding(20), Margin = Padding.Empty };
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var logo = new PictureBox { Size = new Size(62, 62), Margin = new Padding(0, 0, 16, 0), SizeMode = PictureBoxSizeMode.Zoom };
         try { logo.Image = Icon?.ToBitmap(); } catch { }
-        heading.Controls.Add(logo);
-        heading.Controls.Add(new Label { Text = "WUPA", ForeColor = Color.White, Font = new Font("Segoe UI Semibold", 21F), Location = new Point(88, 12), AutoSize = true });
-        heading.Controls.Add(new Label { Text = "Windows Update Performance Analyzer", ForeColor = Color.FromArgb(183, 223, 237), Font = new Font("Segoe UI", 10.5F), Location = new Point(91, 54), AutoSize = true });
-        root.Controls.Add(heading);
+        heading.Controls.Add(logo, 0, 0);
+        _title.AutoSize = true;
+        _title.Dock = DockStyle.Top;
+        _title.ColumnCount = 1;
+        _title.Margin = Padding.Empty;
+        _title.Controls.Add(new Label { Text = "WUPA", Dock = DockStyle.Top, ForeColor = Color.White, Font = new Font("Segoe UI Semibold", 21F), AutoSize = true, Margin = Padding.Empty });
+        _title.Controls.Add(new Label { Text = "Windows Update Performance Analyzer", Dock = DockStyle.Top, ForeColor = Color.FromArgb(183, 223, 237), Font = new Font("Segoe UI", 10.5F), AutoSize = true, Margin = Padding.Empty });
+        heading.Controls.Add(_title, 1, 0);
+        _content.Controls.Add(heading);
 
-        var statusCard = new Panel { Dock = DockStyle.Top, Height = 142, BackColor = Color.White, Padding = new Padding(18), Margin = new Padding(0, 14, 0, 12) };
+        var statusCard = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, BackColor = Color.White, Padding = new Padding(20), Margin = new Padding(0, 16, 0, 16) };
+        statusCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         _status.Text = "Checking this computer…";
         _status.Font = new Font("Segoe UI Semibold", 15F);
         _status.ForeColor = Color.FromArgb(6, 38, 70);
@@ -94,39 +112,52 @@ internal sealed class MainForm : Form
         _status.AutoSize = true;
         _statusDetail.Text = "Loading the focused Windows Update collector.";
         _statusDetail.ForeColor = Color.FromArgb(70, 80, 92);
-        _statusDetail.Location = new Point(18, 56);
-        _statusDetail.Width = 720;
-        _statusDetail.Height = 44;
-        _statusDetail.AutoEllipsis = true;
+        _statusDetail.Dock = DockStyle.Top;
+        _statusDetail.AutoSize = true;
+        _statusDetail.Margin = new Padding(0, 10, 0, 12);
         _stage.Text = "Target: Windows 11 25H2  •  Results: Public Documents";
         _stage.ForeColor = Color.FromArgb(0, 119, 125);
         _stage.Font = new Font("Segoe UI Semibold", 9.5F);
-        _stage.Location = new Point(18, 112);
         _stage.AutoSize = true;
-        statusCard.Controls.Add(_stage);
-        statusCard.Controls.Add(_statusDetail);
+        _stage.Dock = DockStyle.Top;
+        _stage.Margin = Padding.Empty;
         statusCard.Controls.Add(_status);
-        root.Controls.Add(statusCard);
+        statusCard.Controls.Add(_statusDetail);
+        statusCard.Controls.Add(_stage);
+        _content.Controls.Add(statusCard);
 
-        ConfigureButton(_primary, "Start tracking the 25H2 update", Color.FromArgb(0, 113, 188), 48);
+        ConfigureButton(_primary, "Start tracking", Color.FromArgb(0, 113, 188), 48);
+        _primary.Enabled = false;
         _primary.Dock = DockStyle.Top;
         _primary.Font = new Font("Segoe UI Semibold", 11F);
         _primary.Click += async (_, _) => await ConfirmAndRunPrimaryAsync();
-        root.Controls.Add(_primary);
+        _content.Controls.Add(_primary);
 
-        var secondary = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Margin = new Padding(0, 12, 0, 8) };
-        ConfigureButton(_analyze, "Analyze existing update logs", Color.FromArgb(65, 76, 90), 34);
-        ConfigureButton(_openReport, "Open latest report", Color.FromArgb(65, 76, 90), 34);
-        ConfigureButton(_openFolder, "Open results folder", Color.FromArgb(65, 76, 90), 34);
-        ConfigureButton(_cancel, "Cancel tracking", Color.FromArgb(146, 67, 42), 34);
+        ConfigureLink(_analyze, "Already attempted the update? Create a report from existing logs");
+        _analyze.Dock = DockStyle.Top;
+        _analyze.Visible = false;
+        ConfigureLink(_openReport, "Open latest completed report");
+        ConfigureLink(_openFolder, "Open report folder");
+        ConfigureLink(_cancel, "Stop tracking without a report");
+        _cancel.LinkColor = Color.FromArgb(146, 67, 42);
+        _cancel.Dock = DockStyle.Top;
+        _cancel.Visible = false;
         _analyze.Click += async (_, _) => await RunActionAsync("Analyze");
         _openReport.Click += (_, _) => OpenLatestReport();
         _openFolder.Click += (_, _) => OpenBestFolder();
         _cancel.Click += async (_, _) => await ConfirmCancelAsync();
-        secondary.Controls.AddRange(new Control[] { _analyze, _openReport, _openFolder, _cancel });
-        root.Controls.Add(secondary);
+        _content.Controls.Add(_analyze);
+        _content.Controls.Add(_cancel);
+        _reportLinks.Dock = DockStyle.Top;
+        _reportLinks.AutoSize = true;
+        _reportLinks.WrapContents = true;
+        _reportLinks.Margin = new Padding(0, 12, 0, 4);
+        _reportLinks.Visible = false;
+        _reportLinks.Controls.AddRange(new Control[] { _openReport, _openFolder });
+        _content.Controls.Add(_reportLinks);
 
-        _detailsPanel.Dock = DockStyle.Fill;
+        _detailsPanel.Dock = DockStyle.Top;
+        _detailsPanel.Height = 260;
         _detailsPanel.Visible = false;
         _log.Dock = DockStyle.Fill;
         _log.Multiline = true;
@@ -136,19 +167,55 @@ internal sealed class MainForm : Form
         _log.Font = new Font("Consolas", 8.5F);
         _log.BackColor = Color.FromArgb(20, 27, 35);
         _log.ForeColor = Color.FromArgb(220, 231, 239);
-        _detailsPanel.Controls.Add(_log);
-        root.Controls.Add(_detailsPanel);
-
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
-        _details.Text = "Show technical details";
-        _details.AutoSize = true;
-        _details.FlatStyle = FlatStyle.Flat;
-        _details.FlatAppearance.BorderSize = 0;
-        _details.ForeColor = Color.FromArgb(0, 96, 160);
+        ConfigureLink(_trackingFiles, "Open tracking files (ProgramData)");
+        _trackingFiles.Dock = DockStyle.Top;
+        _trackingFiles.Visible = false;
+        _trackingFiles.Click += (_, _) => { var active = ActiveRunInfo.TryRead(); if (active is not null && Directory.Exists(active.RunPath)) OpenPath(active.RunPath); };
+        var technical = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        technical.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        technical.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        technical.Controls.Add(_trackingFiles);
+        technical.Controls.Add(_log);
+        _detailsPanel.Controls.Add(technical);
+        ConfigureLink(_details, "Show collector log");
+        _details.Dock = DockStyle.Top;
         _details.Click += (_, _) => ToggleDetails();
-        footer.Controls.Add(_details);
-        footer.Controls.Add(new Label { Text = "Read-only: WUPA never installs updates or applies repairs.", AutoSize = true, ForeColor = Color.FromArgb(92, 100, 112), Padding = new Padding(16, 7, 0, 0) });
-        root.Controls.Add(footer);
+        _content.Controls.Add(_details);
+        _content.Controls.Add(_detailsPanel);
+        _content.Controls.Add(new Label { Text = "Collects evidence only. Does not install updates or make repairs.", Dock = DockStyle.Top, AutoSize = true, ForeColor = Color.FromArgb(92, 100, 112), Margin = new Padding(0, 16, 0, 0) });
+        LayoutContent();
+    }
+
+    private static void ConfigureLink(LinkLabel link, string text)
+    {
+        link.Text = text;
+        link.AutoSize = true;
+        link.LinkBehavior = LinkBehavior.HoverUnderline;
+        link.LinkColor = Color.FromArgb(0, 96, 160);
+        link.ActiveLinkColor = Color.FromArgb(0, 70, 120);
+        link.Margin = new Padding(0, 8, 20, 8);
+        link.Padding = new Padding(0, 3, 0, 3);
+    }
+
+    private void LayoutContent()
+    {
+        if (_content.IsDisposed || _layingOut) return;
+        _layingOut = true;
+        try
+        {
+        var gutter = LogicalToDeviceUnits(24);
+        var width = Math.Max(1, Math.Min(LogicalToDeviceUnits(920), _viewport.ClientSize.Width - gutter * 2));
+        _content.MinimumSize = _content.MaximumSize = new Size(width, 0);
+        _content.Width = width;
+        var textWidth = Math.Max(1, width - LogicalToDeviceUnits(40));
+        foreach (var label in _title.Controls.OfType<Label>()) label.MaximumSize = new Size(Math.Max(1, width - LogicalToDeviceUnits(118)), 0);
+        _status.MaximumSize = _statusDetail.MaximumSize = _stage.MaximumSize = new Size(textWidth, 0);
+        _analyze.MaximumSize = _cancel.MaximumSize = new Size(width, 0);
+        _detailsPanel.Height = Math.Max(LogicalToDeviceUnits(220), Math.Min(LogicalToDeviceUnits(420), _viewport.ClientSize.Height - LogicalToDeviceUnits(460)));
+        _content.Location = new Point(Math.Max(gutter, (_viewport.ClientSize.Width - width) / 2), gutter + _viewport.AutoScrollPosition.Y);
+        _content.PerformLayout();
+        }
+        finally { _layingOut = false; }
     }
 
     private static void ConfigureButton(Button button, string text, Color color, int height)
@@ -156,6 +223,7 @@ internal sealed class MainForm : Form
         button.Text = text;
         button.AutoSize = true;
         button.Height = height;
+        button.MinimumSize = new Size(0, height);
         button.Padding = new Padding(14, 0, 14, 0);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
@@ -188,7 +256,7 @@ internal sealed class MainForm : Form
     {
         if (_primaryAction == "Finish")
         {
-            var answer = MessageBox.Show(this, "Finish tracking now? WUPA will stop its recorder, collect the final update evidence, build the report, and remove this case's scheduled tasks and setup hooks.", "Finish and create report", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            var answer = MessageBox.Show(this, "Finish tracking and build a report now? WUPA will stop its recorder, collect final evidence, and remove this case's scheduled tasks and setup hooks. If the update is still running, later activity will not be recorded.", "Finish tracking and build report", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (answer != DialogResult.Yes) return;
         }
         await RunActionAsync(_primaryAction);
@@ -196,7 +264,7 @@ internal sealed class MainForm : Form
 
     private async Task ConfirmCancelAsync()
     {
-        var answer = MessageBox.Show(this, "Cancel tracking without creating a report? WUPA will remove this case's scheduled tasks and setup hooks. Evidence already recorded in ProgramData is retained.", "Cancel tracking", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        var answer = MessageBox.Show(this, "Stop tracking without creating a report? WUPA will stop the recorder and remove this case's scheduled tasks and setup hooks. Evidence already recorded in ProgramData is retained. Use Finish tracking and build report if you want a report.", "Stop without a report", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (answer == DialogResult.Yes) await RunActionAsync("Cancel");
     }
 
@@ -234,7 +302,7 @@ internal sealed class MainForm : Form
                 SetStatus(result.ExitCode >= 30 ? "Report created with evidence gaps" : "Report ready", report, result.ExitCode >= 30);
                 if (MessageBox.Show(this, $"WUPA finished with exit code {result.ExitCode}.\n\nOpen the report now?", "Report ready", MessageBoxButtons.YesNo, result.ExitCode >= 30 ? MessageBoxIcon.Warning : MessageBoxIcon.Information) == DialogResult.Yes) OpenPath(report);
             }
-            else if (action == "Cancel") SetStatus("Tracking canceled", "Scheduled tasks and setup hooks owned by this case were removed. Existing staged evidence was retained.", result.ExitCode != 0);
+            else if (action == "Cancel") SetStatus("Tracking stopped — no report created", "This case's recorder, scheduled tasks and setup hooks were stopped or removed. Previously collected evidence was retained.", result.ExitCode != 0);
         }
         catch (Exception ex)
         {
@@ -279,75 +347,83 @@ internal sealed class MainForm : Form
     {
         var active = ActiveRunInfo.TryRead();
         var legacyActive = ActiveRunInfo.LegacyCaseExists();
+        var collector = active?.TryReadLatestCollectorStatus();
+        if (collector is not null && !string.Equals(_lastCollectorLine, collector.RawLine, StringComparison.Ordinal)) { _lastCollectorLine = collector.RawLine; AppendLog("[Collector.log] " + collector.RawLine); }
+        ApplyViewState(CurrentBuild(), legacyActive, active, active?.ProbeRunLock() ?? RunLockStatus.NotHeld, collector, FindLatestReport() is not null, updateStatus);
+    }
+
+    // The same rendering path is exercised by the Windows layout harness with
+    // fixtures. It does not arm tracking, read registry keys or run collectors.
+    internal void ApplyViewState(int currentBuild, bool legacyActive, ActiveRunInfo? active, RunLockStatus lockState, CollectorLogStatus? collector, bool hasReport, bool updateStatus = true)
+    {
+        _trackingFiles.Visible = active is not null;
+        _trackingFiles.Enabled = !_busy;
+        _reportLinks.Visible = hasReport;
+        _openReport.Enabled = _openFolder.Enabled = !_busy && hasReport;
+        _stage.Text = "Target: Windows 11 25H2  •  Reports: Public Documents";
         if (active is not null)
         {
             _lastOutputPath = active.OutputPath;
-            var lockState = active.ProbeRunLock();
-            var collector = active.TryReadLatestCollectorStatus();
-            if (collector is not null && !string.Equals(_lastCollectorLine, collector.RawLine, StringComparison.Ordinal)) { _lastCollectorLine = collector.RawLine; AppendLog("[Collector.log] " + collector.RawLine); }
             _primaryAction = "Finish";
-            _primary.Text = lockState == RunLockStatus.Held ? "Automatic report is running…" : "Finish and create report";
+            _primary.Text = lockState == RunLockStatus.Held ? "Collection is already running…" : "Finish tracking and build report";
             _primary.Enabled = !_busy && lockState == RunLockStatus.NotHeld;
             _analyze.Visible = false;
             _cancel.Visible = true;
             _cancel.Enabled = !_busy && lockState == RunLockStatus.NotHeld;
-            _openFolder.Enabled = Directory.Exists(active.RunPath) || Directory.Exists(active.OutputPath);
             if (updateStatus && !_busy)
             {
                 if (lockState == RunLockStatus.Held) ShowAutomaticFinalization(active, false);
+                else if (lockState == RunLockStatus.Unknown) SetStatus("Cannot verify this run's status", "WUPA could not read the collector lock. Finish/stop actions are unavailable until its status can be verified. Check the collector log.", true);
                 else if (!active.RecorderStartStatus.Equals("Started", StringComparison.OrdinalIgnoreCase)) SetStatus("Tracking needs attention", $"Recorder startup status: {active.RecorderStartStatus}. {collector?.DisplayText}", true);
                 else SetStatus("Tracking the 25H2 update", collector?.DisplayText ?? "WUPA is sampling Windows Update progress every 60 seconds and survives reboots.", false);
             }
-            _stage.Text = $"Run {active.RunId}  •  Target 25H2  •  Expires {active.ExpiresUtcLocal}";
         }
         else
         {
             _lastCollectorLine = null;
             _cancel.Visible = false;
             _analyze.Visible = !legacyActive;
-            _openFolder.Enabled = FindLatestReport() is not null;
             if (legacyActive)
             {
                 _primary.Enabled = false;
                 _analyze.Visible = false;
                 if (updateStatus && !_busy) SetStatus("A version 2 case is still active", "Finish or cancel the older case with Windows Update Analytics 2.2.1 before starting WUPA.", true);
             }
-            else if (CurrentBuild() >= TargetBuild)
+            else if (currentBuild >= TargetBuild)
             {
                 _primaryAction = "Analyze";
-                _primary.Text = "Analyze the completed 25H2 update";
+                _primary.Text = "Create report from existing logs";
                 _primary.Enabled = !_busy;
                 _analyze.Visible = false;
-                if (updateStatus && !_busy) SetStatus("Windows 11 25H2 is installed", "Create a focused after-the-fact report from the update evidence still retained on this computer.", false);
+                if (updateStatus && !_busy) SetStatus(currentBuild == TargetBuild ? "Windows 11 25H2 is installed" : "A newer Windows build is installed", "Create a report from retained update logs. Missing download, install or reboot timestamps stay unknown; this does not start monitoring or prove how 25H2 was installed.", false);
             }
             else
             {
                 _primaryAction = "Start";
-                _primary.Text = "Start tracking the 25H2 update";
+                _primary.Text = "Start tracking";
                 _primary.Enabled = !_busy;
-                if (updateStatus && !_busy) SetStatus("Ready to start a tracking case", "Start WUPA before your existing deployment process offers or installs Windows 11 25H2.", false);
+                if (updateStatus && !_busy) SetStatus("Start here before the update", "Start tracking, wait for Ready, then run the 25H2 update normally. WUPA records progress across reboots and builds a report when a final result is observed.", false);
             }
-            _stage.Text = "Target: Windows 11 25H2  •  Results: Public Documents";
         }
-        _openReport.Enabled = !_busy && FindLatestReport() is not null;
+        LayoutContent();
     }
 
     private void ShowAutomaticFinalization(ActiveRunInfo? active, bool dialog)
     {
         var detail = active?.TryReadLatestCollectorStatus()?.DisplayText ?? "The automatic post-reboot task is collecting final evidence. This window refreshes every five seconds.";
-        SetStatus("Automatic report is already running", detail, false);
+        SetStatus("A collector is already working on this run", detail, false);
         _primary.Enabled = false;
-        _primary.Text = "Automatic report is running…";
+        _primary.Text = "Collection is already running…";
         _cancel.Enabled = false;
         if (dialog) MessageBox.Show(this, detail, "WUPA is already working", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void SetBusy(bool busy) { UseWaitCursor = busy; foreach (var control in new Control[] { _primary, _analyze, _openReport, _openFolder, _cancel }) control.Enabled = !busy; }
     private void SetStatus(string title, string detail, bool warning) { if (InvokeRequired) { BeginInvoke(new Action(() => SetStatus(title, detail, warning))); return; } _status.Text = title; _status.ForeColor = warning ? Color.FromArgb(170, 62, 42) : Color.FromArgb(6, 38, 70); _statusDetail.Text = detail; }
-    private void ToggleDetails() { _detailsVisible = !_detailsVisible; _detailsPanel.Visible = _detailsVisible; _details.Text = _detailsVisible ? "Hide technical details" : "Show technical details"; Height = _detailsVisible ? Math.Max(760, Height) : Math.Min(640, Height); }
+    internal void ToggleDetails() { _detailsVisible = !_detailsVisible; _detailsPanel.Visible = _detailsVisible; _details.Text = _detailsVisible ? "Hide collector log" : "Show collector log"; LayoutContent(); }
     private void AppendLog(string value) { if (InvokeRequired) { BeginInvoke(new Action(() => AppendLog(value))); return; } _log.AppendText(value + Environment.NewLine); _log.SelectionStart = _log.TextLength; _log.ScrollToCaret(); }
     private void OpenLatestReport() { var report = FindLatestReport(); if (report is null) MessageBox.Show(this, "No finalized WUPA report was found.", "No report yet", MessageBoxButtons.OK, MessageBoxIcon.Information); else OpenPath(report); }
-    private void OpenBestFolder() { var active = ActiveRunInfo.TryRead(); if (active is not null && Directory.Exists(active.RunPath)) { OpenPath(active.RunPath); return; } var report = FindLatestReport(); if (report is not null) OpenPath(Path.GetDirectoryName(report)!); }
+    private void OpenBestFolder() { var report = FindLatestReport(); if (report is not null) OpenPath(Path.GetDirectoryName(report)!); }
 
     private string? FindLatestReport(DateTime? notBeforeUtc = null)
     {
@@ -360,7 +436,7 @@ internal sealed class MainForm : Form
 
     private static int CurrentBuild() { try { using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"); return int.TryParse(key?.GetValue("CurrentBuild")?.ToString(), out var build) ? build : Environment.OSVersion.Version.Build; } catch { return Environment.OSVersion.Version.Build; } }
     private static string GetPublicDocuments() { var publicRoot = Environment.GetEnvironmentVariable("PUBLIC"); return !string.IsNullOrWhiteSpace(publicRoot) ? Path.Combine(publicRoot, "Documents") : Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments); }
-    private static string ActionTitle(string action) => action switch { "Start" => "Starting update tracking", "Finish" => "Building the final report", "Analyze" => "Analyzing retained update evidence", "Cancel" => "Canceling update tracking", _ => "WUPA is working" };
+    private static string ActionTitle(string action) => action switch { "Start" => "Starting update tracking", "Finish" => "Building the final report", "Analyze" => "Collecting retained update logs", "Cancel" => "Stopping tracking without a report", _ => "WUPA is working" };
     private static void OpenPath(string path) => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     private void OnClosing(object? sender, FormClosingEventArgs e) { if (!_busy) return; e.Cancel = true; MessageBox.Show(this, "WUPA is still collecting. Wait for this pass to finish before closing the app.", "Collection in progress", MessageBoxButtons.OK, MessageBoxIcon.Information); }
 }
@@ -376,13 +452,13 @@ internal static class StartupFailureLog
 
 internal sealed class ActiveRunInfo
 {
-    public string RunId { get; private init; } = string.Empty;
-    public string Status { get; private init; } = string.Empty;
-    public string TargetVersion { get; private init; } = string.Empty;
-    public string RunPath { get; private init; } = string.Empty;
-    public string? OutputPath { get; private init; }
-    public string RecorderStartStatus { get; private init; } = string.Empty;
-    public DateTime? ExpiresUtc { get; private init; }
+    public string RunId { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public string TargetVersion { get; init; } = string.Empty;
+    public string RunPath { get; init; } = string.Empty;
+    public string? OutputPath { get; init; }
+    public string RecorderStartStatus { get; init; } = string.Empty;
+    public DateTime? ExpiresUtc { get; init; }
     public string ExpiresUtcLocal => ExpiresUtc?.ToLocalTime().ToString("g") ?? "unknown";
     public RunLockStatus ProbeRunLock() { if (string.IsNullOrWhiteSpace(RunPath)) return RunLockStatus.Unknown; var path = Path.Combine(RunPath, "State", "run.lock"); if (!File.Exists(path)) return RunLockStatus.NotHeld; try { using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None); return RunLockStatus.NotHeld; } catch (FileNotFoundException) { return RunLockStatus.NotHeld; } catch (DirectoryNotFoundException) { return RunLockStatus.NotHeld; } catch (IOException) { return RunLockStatus.Held; } catch { return RunLockStatus.Unknown; } }
     public CollectorLogStatus? TryReadLatestCollectorStatus()

@@ -26,9 +26,9 @@ Assert-WupaV300 ($entry -match ('\$toolVersion\s*=\s*''' + [Regex]::Escape($vers
 Assert-WupaV300 ($entry -match "ValidateSet\('Start', 'Resume', 'Finish', 'Analyze', 'Cancel'\)" -and $entry -notmatch "ValidateSet\('Auto'" -and $entry -notmatch '\[string\]\$OutputPath' -and $entry -notmatch '\[string\]\$CopyTo' -and $entry -notmatch '\[string\]\$MediaPath') 'Public engine actions are reduced to the focused lifecycle'
 Assert-WupaV300 ($entry -match '\$TargetVersion = ''25H2''' -and $entry -match '\$ArmDays = 30' -and $entry -match '\$leaf = ''WUPA-') 'Target, expiry, and Public Documents case naming are fixed defaults'
 
-Assert-WupaV300 ($gui -match 'Start tracking the 25H2 update' -and $gui -match 'Finish and create report' -and $gui -match 'Analyze the completed 25H2 update') 'GUI primary action follows the current lifecycle state'
+Assert-WupaV300 ($gui -match 'Start tracking' -and $gui -match 'Finish tracking and build report' -and $gui -match 'Create report from existing logs') 'GUI primary action follows the current lifecycle state'
 Assert-WupaV300 ($gui -notmatch 'Collection settings' -and $gui -notmatch 'Optional UNC copy' -and $gui -notmatch 'Media scan' -and $gui -notmatch 'Include full MEMORY') 'GUI no longer exposes collector implementation switches'
-Assert-WupaV300 ($gui -match 'Show technical details' -and $gui -match 'Last collector status' -and $gui -match 'Automatic report is already running') 'Technical progress is available without dominating the simple interface'
+Assert-WupaV300 ($gui -match 'Show collector log' -and $gui -match 'Last collector status' -and $gui -match 'A collector is already working on this run') 'Technical progress is available without dominating the simple interface'
 Assert-WupaV300 ($project -match '<AssemblyName>WUPA</AssemblyName>' -and $project -match '<ApplicationIcon>Assets\\WUPA\.ico</ApplicationIcon>' -and (Test-Path -LiteralPath (Join-Path $toolRoot 'Gui/Assets/WUPA.svg'))) 'Executable and editable vector logo use the WUPA brand'
 
 $allCollectorBlock = [regex]::Match($collectors, '(?s)function Invoke-WudAllCollectors \{.+?\n\}').Value

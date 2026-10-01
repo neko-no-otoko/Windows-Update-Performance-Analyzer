@@ -7,16 +7,16 @@ Windows Update Performance Analyzer is a focused, read-only Windows 11 25H2 upda
 ## Use it
 
 1. Download the one-file executable for the computer:
-   - `WUPA-3.1.0-win-x64.exe` for most Windows PCs.
-   - `WUPA-3.1.0-win-arm64.exe` for Windows on ARM.
+   - `WUPA-3.1.1-win-x64.exe` for most Windows PCs.
+   - `WUPA-3.1.1-win-arm64.exe` for Windows on ARM.
 2. Run the executable and approve UAC.
-3. Select **Start tracking the 25H2 update** before the update is offered or installed.
+3. Select **Start tracking** before the update is offered or installed.
 4. Wait for **Ready for the 25H2 update**. You can then close WUPA.
 5. Start the update normally from Windows Update, Intune, ConfigMgr, or your existing deployment process.
 6. WUPA continues as SYSTEM through downloads and reboots. It automatically creates the report when a terminal result is observed.
-7. To finish manually, reopen the same executable and select **Finish and create report**.
+7. To finish manually, reopen the same executable and select **Finish tracking and build report**.
 
-If 25H2 is already installed, the primary action becomes **Analyze the completed 25H2 update**. On an older build, **Analyze existing update logs** provides the same after-the-fact collection for a failed or rolled-back attempt.
+If 25H2 is already installed, the primary action becomes **Create report from existing logs**. On an older build, **Already attempted the update? Create a report from existing logs** provides the same after-the-fact collection for a failed or rolled-back attempt. This is retrospective collection, not a guarantee that download/install/reboot boundaries are still available.
 
 ## What the operator sees
 
@@ -32,7 +32,7 @@ WUPA has no settings page and no public command-line workflow. The target and sa
 - no installed-software inventory
 - no DISM health scan, SFC verification, or repair action
 
-The app exposes one state-aware primary button plus **Open latest report**, **Open results folder**, and **Cancel tracking** when relevant. Technical logs are hidden unless expanded.
+The app exposes one state-aware primary button. Links to **Open latest completed report** and **Open report folder** appear only when a report exists. **Stop tracking without a report** is a separate, confirmed action while monitoring. **Show collector log** reveals technical output and **Open tracking files (ProgramData)**; the report-folder link always opens a finalized report folder in Public Documents. The centered, width-limited layout wraps text when resized, scrolls on small windows, and does not resize or restore a maximized window when toggling the log.
 
 ## Focused evidence profile
 

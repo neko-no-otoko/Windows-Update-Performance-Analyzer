@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.1 — 2026-10-01
+
+- Center the native GUI in a width-limited, scrollable layout; remove fixed-width status text and the blank expanding row. Collector-log toggles no longer resize the window or disturb maximized state.
+- Keep one state-aware primary button: Start tracking, Finish tracking and build report, or Create report from existing logs. Use contextual links instead of a row of secondary buttons; hide report links until a report exists.
+- Correct report-folder navigation to open only finalized output in Public Documents; expose ProgramData tracking files separately inside the collector-log section.
+- Distinguish finish-with-report from stop-without-report, describe retrospective collection honestly, and stop calling every held run lock automatic finalization. Disable conflicting actions for held/unreadable locks. A newer Windows build is no longer labeled 25H2 in the GUI.
+- Add native Windows GUI layout/state tests and rendered snapshots at small, normal, wide and maximized sizes, with collector log closed/open and larger-text stress cases. Tests do not start collectors or arm tasks.
+
 ## 3.1.0 — 2026-10-01
 
 - Add independent per-UpdateID/revision activity groups to HTML, JSON and CSV exports; keep concurrent update outcomes separate from the target. Preserve conflicting known update services and no-ID context explicitly.

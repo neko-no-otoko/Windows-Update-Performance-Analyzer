@@ -58,9 +58,23 @@ jobs:
         shell: pwsh
         run: ./Build/Build-WindowsExecutables.ps1 -RuntimeIdentifiers win-x64,win-arm64
 
+      - name: Validate native GUI layout and render snapshots
+        shell: pwsh
+        run: |
+          dotnet run --project ./Tests/Gui.LayoutTests/Gui.LayoutTests.csproj --configuration Release -- ./gui-layout-results
+          if ($LASTEXITCODE -ne 0) { throw 'Native GUI layout validation failed.' }
+
+      - name: Upload GUI validation snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WUPA-GUI-layout-validation
+          path: gui-layout-results/
+          if-no-files-found: warn
+
       - uses: actions/upload-artifact@v4
         with:
-          name: WUPA-3.1.0
+          name: WUPA-3.1.1
           path: |
             dist/*.exe
             dist/*.json
