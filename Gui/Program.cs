@@ -225,6 +225,9 @@ internal sealed class MainForm : Form
             _content.PerformLayout();
             _viewport.AutoScrollMinSize = new Size(0, _content.Height + gutter * 2);
             _viewport.PerformLayout();
+            // AutoScroll can remove/add its vertical bar during layout. Center
+            // against the final client width, not the pre-layout viewport.
+            _content.Location = new Point(Math.Max(gutter, (_viewport.ClientSize.Width - _content.Width) / 2), gutter + _viewport.AutoScrollPosition.Y);
         }
         finally { _layingOut = false; }
     }

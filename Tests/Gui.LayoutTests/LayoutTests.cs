@@ -46,8 +46,8 @@ internal static class GuiLayoutTests
                         viewport.Visible = true;
                         viewport.CreateControl(); Settle(form);
                         Assert(viewport.Size == size, state + ": wide viewport has the requested native surface size");
-                        ValidateLayout(form, state + "-" + size.Width);
                         using (var bitmap = new Bitmap(size.Width, size.Height)) { viewport.DrawToBitmap(bitmap, new Rectangle(Point.Empty, size)); bitmap.Save(Path.Combine(output, state + "-" + size.Width + ".png"), ImageFormat.Png); }
+                        ValidateLayout(form, state + "-" + size.Width);
                         Snapshots.Add(new { Name = state + "-" + size.Width, Kind = "NativeViewport", Width = viewport.Width, Height = viewport.Height, Dpi = form.DeviceDpi });
                         form.Controls.Add(viewport);
                         viewport.Dock = DockStyle.Fill; Settle(form);
@@ -130,7 +130,7 @@ internal static class GuiLayoutTests
         var viewport = Field<Panel>(form, "_viewport");
         Assert(!viewport.HorizontalScroll.Visible, name + ": no unnecessary horizontal page scrollbar");
         Assert(content.Width <= (int)Math.Ceiling(920 * form.DeviceDpi / 96D), name + ": content width is bounded");
-        Assert(Math.Abs(content.Left - (viewport.ClientSize.Width - content.Width) / 2) <= 2, name + ": content stays centered");
+        Assert(Math.Abs(content.Left - (viewport.ClientSize.Width - content.Width) / 2) <= 2, name + $": content stays centered (left={content.Left}, content={content.Width}, viewport={viewport.ClientSize.Width}, scroll={viewport.AutoScrollPosition})");
         foreach (var control in Descendants(content).Where(c => c.Visible && c.Parent is not null))
         {
             Assert(control.Right <= control.Parent!.ClientSize.Width + 2 && control.Left >= -2, name + ": horizontal bounds for " + control.GetType().Name);

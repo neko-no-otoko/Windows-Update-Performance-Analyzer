@@ -54,10 +54,6 @@ jobs:
         shell: powershell
         run: ./Tests/Invoke-UpgradeIdentityTests.ps1
 
-      - name: Publish x64 and ARM64 single-file applications
-        shell: pwsh
-        run: ./Build/Build-WindowsExecutables.ps1 -RuntimeIdentifiers win-x64,win-arm64
-
       - name: Validate native GUI layout and render snapshots
         shell: pwsh
         run: |
@@ -71,6 +67,10 @@ jobs:
           name: WUPA-GUI-layout-validation
           path: gui-layout-results/
           if-no-files-found: warn
+
+      - name: Publish x64 and ARM64 single-file applications
+        shell: pwsh
+        run: ./Build/Build-WindowsExecutables.ps1 -RuntimeIdentifiers win-x64,win-arm64
 
       - name: Build portable GUI validation harness for Windows VM checks
         shell: pwsh
