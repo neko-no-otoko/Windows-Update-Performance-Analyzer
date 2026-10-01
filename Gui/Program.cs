@@ -299,8 +299,9 @@ internal sealed class MainForm : Form
             if (!string.IsNullOrWhiteSpace(activeAfter?.OutputPath)) _lastOutputPath = activeAfter.OutputPath;
             if (action == "Start")
             {
+                if (result.RunLockCollision) { ShowAutomaticFinalization(activeAfter ?? activeBefore, true); return; }
                 if (activeAfter is null) throw new InvalidOperationException($"The collector exited with code {result.ExitCode}, but no tracked case was created. {result.LastMessage}");
-                var ready = activeAfter.RecorderStartStatus.Equals("Started", StringComparison.OrdinalIgnoreCase);
+                var ready = result.ExitCode is 0 or 10 && activeAfter.RecorderStartStatus.Equals("Started", StringComparison.OrdinalIgnoreCase);
                 SetStatus(ready ? "Ready for the 25H2 update" : "Tracking needs attention", ready ? "You can close WUPA and start the update normally. Tracking continues across reboots." : $"Recorder startup returned '{activeAfter.RecorderStartStatus}'. Open technical details before starting the update.", !ready);
                 MessageBox.Show(this, ready ? "WUPA is ready. You can close this app and start the Windows 11 25H2 update normally. Tracking continues across reboots and finishes automatically after a terminal result." : "The tracking case was created, but recorder startup was not verified. Review the technical details before starting the update.", ready ? "Ready for the update" : "Tracking needs attention", MessageBoxButtons.OK, ready ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
@@ -313,7 +314,12 @@ internal sealed class MainForm : Form
                 SetStatus(result.ExitCode >= 30 ? "Report created with evidence gaps" : "Report ready", report, result.ExitCode >= 30);
                 if (MessageBox.Show(this, $"WUPA finished with exit code {result.ExitCode}.\n\nOpen the report now?", "Report ready", MessageBoxButtons.YesNo, result.ExitCode >= 30 ? MessageBoxIcon.Warning : MessageBoxIcon.Information) == DialogResult.Yes) OpenPath(report);
             }
-            else if (action == "Cancel") SetStatus("Tracking stopped — no report created", "This case's recorder, scheduled tasks and setup hooks were stopped or removed. Previously collected evidence was retained.", result.ExitCode != 0);
+            else if (action == "Cancel")
+            {
+                if (result.RunLockCollision) { ShowAutomaticFinalization(activeAfter ?? activeBefore, true); return; }
+                if (result.ExitCode != 0) throw new InvalidOperationException($"Tracking could not be stopped (exit code {result.ExitCode}). {result.LastMessage}");
+                SetStatus("Tracking stopped — no report created", "This case's recorder, scheduled tasks and setup hooks were stopped or removed. Previously collected evidence was retained.", false);
+            }
         }
         catch (Exception ex)
         {
@@ -421,7 +427,7 @@ internal sealed class MainForm : Form
 
     private void ShowAutomaticFinalization(ActiveRunInfo? active, bool dialog)
     {
-        var detail = active?.TryReadLatestCollectorStatus()?.DisplayText ?? "The automatic post-reboot task is collecting final evidence. This window refreshes every five seconds.";
+        var detail = active?.TryReadLatestCollectorStatus()?.DisplayText ?? "Another collector holds this run. Wait for it to finish; this window refreshes every five seconds.";
         SetStatus("A collector is already working on this run", detail, false);
         _primary.Enabled = false;
         _primary.Text = "Collection is already running…";
