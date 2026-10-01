@@ -315,7 +315,7 @@ internal sealed partial class MainForm : Form
         try
         {
             if (activeBefore is not null && action is "Finish" or "Resume" &&
-                (!CanMigrate(activeBefore) || UpdateCore.ParseVersion(activeBefore.ToolVersion) > UpdateCore.ParseVersion(_engineVersion)))
+                (activeBefore.HasPendingRuntimeUpdate() || !CanMigrate(activeBefore) || UpdateCore.ParseVersion(activeBefore.ToolVersion) > UpdateCore.ParseVersion(_engineVersion)))
                 throw new InvalidOperationException("This active run needs a compatible, verified engine before finalization. Use its matching WUPA release; do not downgrade the recorder.");
             var result = await RunBackendAsync(action);
             RefreshState(false);
@@ -396,6 +396,11 @@ internal sealed partial class MainForm : Form
         {
             _primary.Enabled = _analyze.Enabled = false;
             if (updateStatus && !_busy) SetStatus("The active run state could not be read", "WUPA will not start a conflicting run or delete evidence. Check ProgramData\\WUPA\\ActiveRun.json and the collector log.", true);
+        }
+        if (active is not null && active.HasPendingRuntimeUpdate())
+        {
+            _primary.Enabled = _cancel.Enabled = false;
+            if (updateStatus && !_busy) SetStatus("An engine update needs recovery", "Use Apply engine to this active run to recover its saved tasks and state before finishing or stopping tracking. Existing evidence has been retained.", true);
         }
         RefreshUpdateControls();
     }

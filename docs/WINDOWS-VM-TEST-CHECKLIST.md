@@ -83,3 +83,15 @@ Run this matrix before general deployment. Record the WUPA executable SHA-256, a
 - [ ] Known-good and known-failed cases preserve expected timestamps/codes without causal invention.
 - [ ] Reviewers can reproduce every displayed fact from its evidence reference.
 - [ ] Complete a 25–50 device ring before broad technician deployment.
+
+## 3.2 verified updates and report recovery
+
+- [ ] Real excluded-dump metadata (no Path property) exports a valid report on a newly upgraded device; incomplete/truncated metadata yields explicit gaps, not code 40.
+- [ ] Code 40 retains the actual fatal detail and cannot be labeled report-ready just because HTML exists. Report.pending or missing/mismatched completion proofs hides final report links.
+- [ ] GitHub check is bounded and non-blocking; offline/proxy/rate-limit failures leave collection available.
+- [ ] Bad signature/key/hash, wrong size, unsafe archive paths, reparse points, extra payloads, redirects and incompatible cached engines are rejected before execution.
+- [ ] The source EXE/network share is never overwritten. A required GUI update downloads a verified EXE to restricted local staging.
+- [ ] Compatible active 3.1.1 case migrates to 3.2.0 with the same RunId, baseline, accumulated samples, expiry and setup hook backup; only owned task actions change.
+- [ ] A held collector refuses migration; task registration/restart failures restore original state/tasks and verify recorder restart.
+- [ ] Pending migration recovers even if the new state/recorder had already started. UI blocks finish/stop until recovery; journal interruption remains visible as a collection gap.
+- [ ] Reboot restarts the migrated recorder; finalization removes only that case's persistence. Real upgrade/rollback coverage remains required separately from synthetic fixtures.
