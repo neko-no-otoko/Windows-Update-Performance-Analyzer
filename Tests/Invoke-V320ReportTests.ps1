@@ -50,6 +50,10 @@ try {
         if ($scenario -eq 'PartialMetadata') { Assert-Report320 (@($manifest.SourceMappings | Where-Object State -eq 'MetadataIncomplete').Count -eq 2) 'Incomplete metadata is explicitly labeled without a strict-mode crash' }
         if ($scenario -eq 'TruncatedMetadata') { Assert-Report320 (@($manifest.CollectionGaps | Where-Object Status -eq 'MetadataUnreadable').Count -eq 2) 'Truncated metadata is retained and reported as material coverage gaps' }
         if ($scenario -in @('PartialMetadata', 'TruncatedMetadata')) { Assert-Report320 ($ctx.ExitCode -eq 30) "$scenario reports materially incomplete evidence with code 30" }
+        if ($scenario -in @('PartialMetadata', 'TruncatedMetadata')) {
+            $coverage = Read-WudJson (Join-Path $ctx.RunPath 'ReviewBundleStaging/CollectionCoverage.json')
+            Assert-Report320 (@($coverage.Gaps).Count -eq @($manifest.CollectionGaps).Count) "$scenario includes the same export gaps in the reviewer bundle"
+        }
         Assert-Report320 ($ctx.ExitCode -ne 40) "$scenario does not report a tool failure"
     }
     Write-Output "PASS: real collector/exporter regression fixtures in $fixture"

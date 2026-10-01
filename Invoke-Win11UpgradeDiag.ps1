@@ -404,7 +404,6 @@ try {
         $finalizationFinalStatus = if ($context.Outcome -eq 'Upgrade Succeeded') { 'CompletedSuccess' } elseif ($context.Outcome -eq 'Rolled Back') { 'CompletedRollback' } elseif ($context.Outcome -eq 'Failed') { 'CompletedFailure' } elseif ($Mode -eq 'Finalize') { 'CompletedOperatorFinalized' } else { 'CompletedForensic' }
     }
 
-    $null = Export-WudReviewBundle -Context $context
     $reportPath = Export-WudReportArtifacts -Context $context
     if ($Mode -in @('Resume', 'Finalize')) {
         $deferCopy = -not [string]::IsNullOrWhiteSpace($context.CopyTo) -and (-not $context.LastCopyResult -or -not $context.LastCopyResult.Succeeded)

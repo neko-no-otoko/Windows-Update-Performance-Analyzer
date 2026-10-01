@@ -824,6 +824,10 @@ function Export-WudReportArtifacts {
         $Context.ExitCode = Resolve-WudExitCode -Context $Context
         $null = Add-WudCollectionGap -Context $Context -Collector 'report-archive' -Source $evidenceZip -Status 'IntegrityMismatch' -Detail ((@($archiveVerification.Missing) + @($archiveVerification.HashMismatches)) -join '; ') -Impact 'Material'
     }
+    # Build the reviewer package only after metadata, state journals and archive
+    # validation have contributed their coverage gaps. A reviewer must see the
+    # same completeness limits as the HTML/JSON report.
+    if ($Context.ReviewData) { $null = Export-WudReviewBundle -Context $Context }
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Inventory.json') -InputObject $Context.Inventory -Depth 40
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Attempts.json') -InputObject @($Context.Attempts) -Depth 40
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'ExcludedEvidence.json') -InputObject @($Context.ExcludedEvidence) -Depth 30
