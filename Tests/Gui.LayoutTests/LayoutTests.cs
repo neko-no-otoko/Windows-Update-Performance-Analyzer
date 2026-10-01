@@ -24,7 +24,7 @@ internal static class GuiLayoutTests
         var status = active.TryReadLatestCollectorStatus();
         try
         {
-            foreach (var state in new[] { "idle", "tracking", "held", "unknown-lock", "report", "newer-build", "legacy" })
+            foreach (var state in new[] { "idle", "tracking", "held", "unknown-lock", "report", "newer-build", "legacy", "update-available", "active-engine-update" })
             {
                 using var form = new MainForm(prepareRuntime: false);
                 form.Show();
@@ -103,10 +103,12 @@ internal static class GuiLayoutTests
 
     private static void Apply(MainForm form, string state, ActiveRunInfo active, CollectorLogStatus? status)
     {
-        var tracking = state is "tracking" or "held" or "unknown-lock";
+        var tracking = state is "tracking" or "held" or "unknown-lock" or "active-engine-update";
         var build = state == "report" ? 26200 : state == "newer-build" ? 28000 : 22631;
         var runLock = state == "held" ? RunLockStatus.Held : state == "unknown-lock" ? RunLockStatus.Unknown : RunLockStatus.NotHeld;
         form.ApplyViewState(build, state == "legacy", tracking ? active : null, runLock, status, state == "report");
+        if (state == "update-available") { var update = Field<LinkLabel>(form, "_updateLink"); update.Text = "Update available: 3.2.1 — apply update"; update.Enabled = true; }
+        if (state == "active-engine-update") { var update = Field<LinkLabel>(form, "_repairRun"); update.Text = "Apply engine 3.2.0 to this active run"; update.Visible = true; update.Enabled = true; }
         Settle(form);
     }
 
@@ -122,6 +124,10 @@ internal static class GuiLayoutTests
         if (state == "report") Assert(primary.Text == "Create report from existing logs" && links.Visible && !analyze.Visible && !cancel.Visible, "Completed target offers retained-log report and actual report-folder links");
         if (state == "newer-build") Assert(!Field<Label>(form, "_status").Text.Contains("25H2 is installed"), "Newer Windows build cannot be labeled as 25H2");
         if (state == "legacy") Assert(!primary.Enabled && !analyze.Visible, "Legacy case still blocks a conflicting new recorder");
+        if (state == "update-available") Assert(Field<LinkLabel>(form, "_updateLink").Enabled, "Available updates use an explicit operator action");
+        if (state == "active-engine-update") Assert(Field<LinkLabel>(form, "_repairRun").Visible && primary.Text == "Finish tracking and build report", "Engine repair remains distinct from finalizing the case");
+        var failure = new BackendExecutionResult(40, new[] { "[ERROR] Fatal tool failure: missing field fixture", "Collector exited with code 40" });
+        Assert(failure.LastMessage!.Contains("missing field fixture"), "Fatal collector detail wins over a generic exit-code tail");
     }
 
     private static void ValidateLayout(MainForm form, string name)
