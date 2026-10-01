@@ -79,6 +79,7 @@ internal sealed class MainForm : Form
     {
         _viewport.Dock = DockStyle.Fill;
         _viewport.AutoScroll = true;
+        _viewport.BackColor = BackColor;
         Controls.Add(_viewport);
         _content.AutoSize = true;
         _content.AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -179,10 +180,13 @@ internal sealed class MainForm : Form
         _trackingFiles.Visible = false;
         _trackingFiles.LinkClicked += (_, _) => { var active = ActiveRunInfo.TryRead(); if (active is not null && Directory.Exists(active.RunPath)) OpenPath(active.RunPath); };
         var technical = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        technical.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         technical.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         technical.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        technical.Controls.Add(_trackingFiles);
-        technical.Controls.Add(_log);
+        // Explicit rows keep the log in the expanding row even when the
+        // optional tracking-files link is hidden.
+        technical.Controls.Add(_trackingFiles, 0, 0);
+        technical.Controls.Add(_log, 0, 1);
         _detailsPanel.Controls.Add(technical);
         ConfigureLink(_details, "Show collector log");
         _details.Dock = DockStyle.Top;
@@ -305,8 +309,8 @@ internal sealed class MainForm : Form
                 if (result.RunLockCollision) { ShowAutomaticFinalization(activeAfter ?? activeBefore, true); return; }
                 if (activeAfter is null) throw new InvalidOperationException($"The collector exited with code {result.ExitCode}, but no tracked case was created. {result.LastMessage}");
                 var ready = result.ExitCode is 0 or 10 && activeAfter.RecorderStartStatus.Equals("Started", StringComparison.OrdinalIgnoreCase);
-                SetStatus(ready ? "Ready for the 25H2 update" : "Tracking needs attention", ready ? "You can close WUPA and start the update normally. Tracking continues across reboots." : $"Recorder startup returned '{activeAfter.RecorderStartStatus}'. Open technical details before starting the update.", !ready);
-                MessageBox.Show(this, ready ? "WUPA is ready. You can close this app and start the Windows 11 25H2 update normally. Tracking continues across reboots and finishes automatically after a terminal result." : "The tracking case was created, but recorder startup was not verified. Review the technical details before starting the update.", ready ? "Ready for the update" : "Tracking needs attention", MessageBoxButtons.OK, ready ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                SetStatus(ready ? "Ready for the 25H2 update" : "Tracking needs attention", ready ? "You can close WUPA and start the update normally. Tracking continues across reboots." : $"Recorder startup returned '{activeAfter.RecorderStartStatus}'. Open the collector log before starting the update.", !ready);
+                MessageBox.Show(this, ready ? "WUPA is ready. You can close this app and start the Windows 11 25H2 update normally. Tracking continues across reboots and finishes automatically after a terminal result." : "The tracking case was created, but recorder startup was not verified. Review the collector log before starting the update.", ready ? "Ready for the update" : "Tracking needs attention", MessageBoxButtons.OK, ready ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
             else if (action is "Finish" or "Resume" or "Analyze")
             {

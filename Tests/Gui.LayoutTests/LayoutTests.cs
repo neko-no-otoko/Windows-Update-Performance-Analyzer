@@ -61,10 +61,10 @@ internal static class GuiLayoutTests
                 }
                 var bounds = form.Bounds;
                 ActivateDetails(form); Settle(form);
-                Assert(Field<TextBox>(form, "_log").Height >= 150, state + ": expanded log has usable height");
+                Save(form, output, state + "-log-open");
+                Assert(Field<TextBox>(form, "_log").Height >= 150, state + $": expanded log has usable height (log={Field<TextBox>(form, "_log").Height}, panel={Field<Panel>(form, "_detailsPanel").Height})");
                 Assert(form.Bounds == bounds, state + ": log toggle does not resize the window");
                 ValidateLayout(form, state + "-log-open");
-                Save(form, output, state + "-log-open");
                 ActivateDetails(form); Settle(form);
                 form.WindowState = FormWindowState.Maximized; Settle(form);
                 bounds = form.Bounds;
