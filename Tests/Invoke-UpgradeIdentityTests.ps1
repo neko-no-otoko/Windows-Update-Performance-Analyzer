@@ -165,6 +165,10 @@ try {
         Assert-Upgrade (@($boundedRecords | Where-Object { $_.Status -eq 'CheckpointCapacityReached' }).Count -eq 15) 'Capacity-limited checkpoint records every excluded native trace'
     }
     finally { $env:SystemRoot = $originalEnvironment.SystemRoot; $env:SystemDrive = $originalEnvironment.SystemDrive; $env:ProgramData = $originalEnvironment.ProgramData }
+    $limitedRun = Join-Path $root 'checkpoint-limit-run'
+    $null = Write-WudRecorderCheckpoint -RunPath $limitedRun -Sample $samples[0] -Reason 'FixtureLimit' -MaximumCheckpoints 0
+    $limitRecords = @((Read-WudJsonLines -Path (Join-Path $limitedRun 'Evidence/Recorder/CheckpointCoverage.jsonl')).Records)
+    Assert-Upgrade ($limitRecords.Count -eq 1 -and $limitRecords[0].Status -eq 'CheckpointLimitReached') 'Exhausted checkpoint-count limit is persisted as coverage rather than silently discarded'
     if (Test-WudIsWindows) {
         $lockedPath = Join-Path $traceSource 'active.etl'
         $exclusive = [IO.File]::Open($lockedPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)

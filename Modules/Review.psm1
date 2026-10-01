@@ -1096,7 +1096,7 @@ function Export-WudReviewBundle {
     Write-WudJsonLines -Path (Join-Path $staging 'Timeline.jsonl') -Records @($Context.Timeline)
     Write-WudJsonLines -Path (Join-Path $staging 'UpdateHistory.jsonl') -Records @($Context.ReviewData.AllUpdateHistory)
     $recorderRoot = Join-Path $Context.RunPath 'Evidence\Recorder'
-    foreach ($name in @('ProgressSamples.jsonl', 'StateTransitions.jsonl', 'UpdateEvents.jsonl', 'UpdateEventCoverage.jsonl')) {
+    foreach ($name in @('ProgressSamples.jsonl', 'StateTransitions.jsonl', 'UpdateEvents.jsonl', 'UpdateEventCoverage.jsonl', 'CheckpointCoverage.jsonl')) {
         $source = Join-Path $recorderRoot $name
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $staging $name) -Force }
         else { Write-WudText -Path (Join-Path $staging $name) -Text '' }

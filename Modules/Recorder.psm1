@@ -584,7 +584,9 @@ function Write-WudRecorderCheckpoint {
     $checkpointRoot = New-WudDirectory -Path (Join-Path $root 'Checkpoints')
     $existing = @(Get-ChildItem -LiteralPath $checkpointRoot -Directory -ErrorAction SilentlyContinue)
     if ($existing.Count -ge $MaximumCheckpoints) {
-        return [pscustomobject][ordered]@{ Status = 'CheckpointLimitReached'; Path = $null; Reason = $Reason; TimestampUtc = Get-WudRecorderProperty $Sample 'TimestampUtc' }
+        $coverage = [pscustomobject][ordered]@{ Status = 'CheckpointLimitReached'; Path = $null; Reason = $Reason; TimestampUtc = Get-WudRecorderProperty $Sample 'TimestampUtc' }
+        Write-WudJsonLine -Path (Join-Path $root 'CheckpointCoverage.jsonl') -InputObject $coverage
+        return $coverage
     }
     $state = [string](Get-WudRecorderProperty $Sample 'RecorderState' (Get-WudRecorderState -Sample $Sample))
     $safeState = $state -replace '[^A-Za-z0-9._-]', '_'
@@ -597,7 +599,9 @@ function Write-WudRecorderCheckpoint {
         NativeFiles = @($native); EventExports = @(); CompletedUtc = [DateTime]::UtcNow.ToString('o')
     }
     Write-WudJsonAtomic -Path (Join-Path $path 'checkpoint-manifest.json') -InputObject $manifest -Depth 30
-    return [pscustomobject][ordered]@{ Status = 'Created'; Path = $path; Reason = $Reason; TimestampUtc = Get-WudRecorderProperty $Sample 'TimestampUtc' }
+    $coverage = [pscustomobject][ordered]@{ Status = 'Created'; Path = $path; Reason = $Reason; TimestampUtc = Get-WudRecorderProperty $Sample 'TimestampUtc' }
+    Write-WudJsonLine -Path (Join-Path $root 'CheckpointCoverage.jsonl') -InputObject $coverage
+    return $coverage
 }
 
 function Invoke-WudRecorderSample {
