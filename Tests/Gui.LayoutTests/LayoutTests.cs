@@ -1,5 +1,6 @@
 using System.Drawing.Imaging;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace Wupa;
@@ -33,11 +34,11 @@ internal static class GuiLayoutTests
                 foreach (var size in new[] { new Size(740, 600), new Size(860, 640), new Size(1920, 1080) })
                 {
                     form.WindowState = FormWindowState.Normal;
-                    // CI's desktop may be 1024x768. Override native maximum
-                    // tracking size only in the harness so the wide window is
-                    // actually rendered, not silently clamped by the desktop.
-                    form.MaximumSize = new Size(4096, 2160);
-                    form.ClientSize = size;
+                    // WinForms clamps managed sizing to the CI desktop's max
+                    // tracking size. Resize the native window in the harness so
+                    // its real client surface can exceed that test desktop.
+                    var border = new Size(form.Width - form.ClientSize.Width, form.Height - form.ClientSize.Height);
+                    Assert(SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, size.Width + border.Width, size.Height + border.Height, 0x0016), "Native snapshot resize succeeded");
                     Settle(form);
                     Assert(form.Width >= size.Width && form.Height >= size.Height, state + ": requested snapshot size was not clamped");
                     ValidateLayout(form, state + "-" + size.Width);
@@ -50,7 +51,6 @@ internal static class GuiLayoutTests
                 ValidateLayout(form, state + "-log-open");
                 Save(form, output, state + "-log-open");
                 ActivateDetails(form); Settle(form);
-                form.MaximumSize = Size.Empty;
                 form.WindowState = FormWindowState.Maximized; Settle(form);
                 bounds = form.Bounds;
                 ActivateDetails(form); Settle(form);
@@ -134,4 +134,7 @@ internal static class GuiLayoutTests
     private static void ActivateDetails(MainForm form) { var link = Field<LinkLabel>(form, "_details"); typeof(LinkLabel).GetMethod("OnLinkClicked", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(link, new object[] { new LinkLabelLinkClickedEventArgs(link.Links[0]) }); }
     private static void Save(MainForm form, string output, string name) { using var bitmap = new Bitmap(form.Width, form.Height); form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(output, name + ".png"), ImageFormat.Png); Snapshots.Add(new { Name = name, Width = form.Width, Height = form.Height, ClientWidth = form.ClientSize.Width, ClientHeight = form.ClientSize.Height, Dpi = form.DeviceDpi }); }
     private static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); Checks.Add(message); }
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 }
