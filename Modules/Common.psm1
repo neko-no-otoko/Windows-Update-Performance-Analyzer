@@ -223,6 +223,7 @@ function New-WudRunContext {
         ReviewData         = $null
         UpgradeTracking    = $null
         UpgradeTiming      = $null
+        UpdateActivity     = $null
         ReviewBundle       = $null
         Recorder            = $null
         StatusModel        = [pscustomobject][ordered]@{
@@ -696,6 +697,56 @@ function Open-WudFileReadStream {
     }
 }
 
+function Get-WudNativeTraceSources {
+    param([string]$WindowsRoot = $env:SystemRoot, [string]$SystemDrive = $env:SystemDrive, [string]$ProgramDataRoot = $env:ProgramData, [string]$RunPath)
+    $sources = @(
+        @{ Name = 'WindowsUpdate-ETL'; Path = (Join-Path $WindowsRoot 'Logs/WindowsUpdate') },
+        @{ Name = 'USOShared-Logs'; Path = (Join-Path $ProgramDataRoot 'USOShared/Logs') },
+        @{ Name = 'USOPrivate-ETL'; Path = (Join-Path $ProgramDataRoot 'USOPrivate') },
+        @{ Name = 'DeliveryOptimization-Logs'; Path = (Join-Path $ProgramDataRoot 'Microsoft/Windows/DeliveryOptimization/Logs') },
+        @{ Name = 'DeliveryOptimization-NetworkService-Logs'; Path = (Join-Path $WindowsRoot 'ServiceProfiles/NetworkService/AppData/Local/Microsoft/Windows/DeliveryOptimization/Logs') },
+        @{ Name = 'WindowsBT-Panther'; Path = (Join-Path $SystemDrive '$WINDOWS.~BT/Sources/Panther') },
+        @{ Name = 'WindowsBT-Rollback'; Path = (Join-Path $SystemDrive '$WINDOWS.~BT/Sources/Rollback') },
+        @{ Name = 'WindowsBT-NewOS-ETL'; Path = (Join-Path $SystemDrive '$WINDOWS.~BT/NewOS/Windows/Panther') },
+        @{ Name = 'WindowsBT-SafeOS-ETL'; Path = (Join-Path $SystemDrive '$WINDOWS.~BT/Sources/SafeOS') },
+        @{ Name = 'Windows-Panther-ETL-Context'; Path = (Join-Path $WindowsRoot 'Panther') },
+        @{ Name = 'Windows-MoSetup'; Path = (Join-Path $WindowsRoot 'Logs/MoSetup') },
+        @{ Name = 'WindowsOld-Panther'; Path = (Join-Path $SystemDrive 'Windows.old/Windows/Panther') },
+        @{ Name = 'WindowsOld-WindowsUpdate-ETL'; Path = (Join-Path $SystemDrive 'Windows.old/Windows/Logs/WindowsUpdate') }
+    )
+    if ($RunPath) { $sources += @{ Name = 'WUPA-SetupCopyLogs'; Path = (Join-Path $RunPath 'SetupCopyLogs') } }
+    return $sources
+}
+
+function Copy-WudNativeTraceFile {
+    param([Parameter(Mandatory = $true)][string]$Source, [Parameter(Mandatory = $true)][string]$Destination)
+    $inputStream = $null; $outputStream = $null; $bytes = 0L; $initial = $null
+    try {
+        $initial = Get-Item -LiteralPath $Source -Force -ErrorAction Stop
+        $inputStream = Open-WudFileReadStream -Path $Source
+        # Bound the snapshot to the length at open: an active writer must not
+        # keep this copy running indefinitely. Never stop a service to flush.
+        $remaining = $inputStream.Length
+        $null = New-WudDirectory -Path (Split-Path -Parent $Destination)
+        $outputStream = [IO.File]::Open((ConvertTo-WudExtendedLengthPath $Destination), [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $buffer = New-Object byte[] 1048576
+        while ($remaining -gt 0) {
+            $count = $inputStream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $remaining))
+            if ($count -eq 0) { break }
+            $outputStream.Write($buffer, 0, $count); $bytes += $count; $remaining -= $count
+        }
+        $outputStream.Dispose(); $outputStream = $null
+        $inputStream.Dispose(); $inputStream = $null
+        $after = Get-Item -LiteralPath $Source -Force -ErrorAction Stop
+        $status = if ($remaining -gt 0) { 'PartialCapture' } elseif ($initial.Length -ne $after.Length -or $initial.LastWriteTimeUtc -ne $after.LastWriteTimeUtc) { 'ChangedDuringCapture' } else { 'CapturedUnflushed' }
+        return [pscustomobject][ordered]@{ Source = $Source; Destination = $Destination; Status = $status; SourceLength = $initial.Length; CapturedLength = $bytes; SourceLastWriteUtc = $initial.LastWriteTimeUtc.ToString('o'); Sha256 = Get-WudFileHashSafe $Destination; Error = $null }
+    }
+    catch {
+        return [pscustomobject][ordered]@{ Source = $Source; Destination = $Destination; Status = 'CopyFailed'; SourceLength = if ($initial) { $initial.Length } else { $null }; CapturedLength = $bytes; SourceLastWriteUtc = $null; Sha256 = if (Test-Path -LiteralPath $Destination) { Get-WudFileHashSafe $Destination } else { $null }; Error = Get-WudErrorDetail $_ }
+    }
+    finally { if ($inputStream) { $inputStream.Dispose() }; if ($outputStream) { $outputStream.Dispose() } }
+}
+
 function Get-WudFileHashSafe {
     param([Parameter(Mandatory = $true)][string]$Path)
     $stream = $null
@@ -818,5 +869,6 @@ Export-ModuleMember -Function @(
     'ConvertTo-WudExtendedLengthPath', 'ConvertFrom-WudExtendedLengthPath', 'Get-WudFileTreeSafe', 'Open-WudFileReadStream',
     'Export-WudRegistryTree', 'ConvertTo-WudByteSize', 'Get-WudSeverityRank', 'Get-WudConfidenceRank',
     'Resolve-WudExitCode', 'ConvertTo-WudCommandLineArgument', 'ConvertTo-WudCsvCell', 'Add-WudCollectionGap',
-    'Get-WudObjectPropertyValue', 'Get-WudErrorDetail', 'ConvertTo-WudUtcDateTime'
+    'Get-WudObjectPropertyValue', 'Get-WudErrorDetail', 'ConvertTo-WudUtcDateTime',
+    'Get-WudNativeTraceSources', 'Copy-WudNativeTraceFile'
 )

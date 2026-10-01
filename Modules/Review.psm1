@@ -244,7 +244,7 @@ function Get-WudUpgradeTrackingModel {
     $matchedHistory = @($history | Where-Object { Test-WudUpgradeIdentityMatch $_ $identity })
     if ($identity.Status -eq 'Locked') { Write-WudJsonAtomic -Path (Join-Path $Context.RunPath 'State/upgrade-identity.json') -InputObject $identity -Depth 15 }
     return [pscustomobject][ordered]@{
-        Identity = $identity; WindowStartUtc = $windowStart; MatchedEvents = $matched; MatchedHistory = $matchedHistory
+        Identity = $identity; WindowStartUtc = $windowStart; MatchedEvents = $matched; MatchedHistory = $matchedHistory; AllEvents = $events
         OtherEventCount = $events.Count - $matched.Count; Providers = @($providers)
         InvalidRecorderLines = @($persistent.InvalidLines)
         AttributionRule = 'Explicit target upgrade title discovers the identity. GUID/revision and known service must match. Temporal proximity, build strings in quality-update titles, and DO FileId alone do not identify an upgrade.'
@@ -252,7 +252,7 @@ function Get-WudUpgradeTrackingModel {
 }
 
 function Get-WudUpgradeTimingModel {
-    param($Context, $Tracking)
+    param($Context, $Tracking, [bool]$IncludeRecorderObservations = $true)
     $sessions = New-Object Collections.ArrayList
     $pending = @{}
     foreach ($event in @(Get-WudReviewProperty $Tracking 'MatchedEvents' @() | Sort-Object TimestampUtc)) {
@@ -286,7 +286,7 @@ function Get-WudUpgradeTimingModel {
             if ($session.StartUtc) { $session.ElapsedSeconds = [Math]::Round((([DateTimeOffset]::Parse($session.EndUtc)) - ([DateTimeOffset]::Parse($session.StartUtc))).TotalSeconds, 3) }
         }
     }
-    $samples = @((Read-WudJsonLines -Path (Join-Path $Context.EvidencePath 'Recorder/ProgressSamples.jsonl')).Records)
+    $samples = @(if ($IncludeRecorderObservations) { (Read-WudJsonLines -Path (Join-Path $Context.EvidencePath 'Recorder/ProgressSamples.jsonl')).Records })
     $targetObservation = $null
     $lastBeforeTarget = $null
     $downloadObservation = $null
@@ -322,6 +322,79 @@ function Get-WudUpgradeTimingModel {
         Sessions = @($sessions); DownloadFirstObserved = $downloadObservation; TargetOsFirstObserved = $targetObservation
         HistoryResults = @(Get-WudReviewProperty $Tracking 'MatchedHistory' @() | ForEach-Object { [pscustomobject]@{ TimestampUtc = $_.DateUtc; ResultCode = $_.ResultCode; EvidenceRef = $_.SourceRef; Meaning = 'WUA history applied-operation timestamp; not a download start, install start, or proof of post-reboot completion.' } })
         Interpretation = 'Elapsed values are wall-clock intervals between matching source events, including any waits and pauses. Each retry is separate. Missing boundaries remain unknown. Unmapped DO traffic remains device-wide context.'
+    }
+}
+
+function Get-WudUpdateActivityModel {
+    param($Context, $Tracking, $AllHistory = @())
+    $history = New-Object Collections.ArrayList
+    $windowStart = Get-WudReviewProperty $Tracking 'WindowStartUtc'
+    if (-not $windowStart) { $windowStart = [DateTime]::UtcNow.AddDays(-[int]$Context.Settings.eventLookbackDays).ToString('o') }
+    for ($index = 0; $index -lt @($AllHistory).Count; $index++) {
+        $entry = $AllHistory[$index]
+        $date = ConvertTo-WudReviewUtc (Get-WudReviewProperty $entry 'DateUtc' (Get-WudReviewProperty $entry 'Date'))
+        if (-not $date -or ([DateTimeOffset]::Parse($date)) -lt ([DateTimeOffset]::Parse($windowStart))) { continue }
+        $null = $history.Add([pscustomobject][ordered]@{
+            DateUtc = $date; Title = Get-WudReviewProperty $entry 'Title'; UpdateID = ConvertTo-WudUpdateGuid (Get-WudReviewProperty $entry 'UpdateID')
+            RevisionNumber = Get-WudReviewProperty $entry 'RevisionNumber'; ServiceID = ConvertTo-WudUpdateGuid (Get-WudReviewProperty $entry 'ServiceID')
+            Operation = Get-WudReviewProperty $entry 'Operation'; ResultCode = Get-WudReviewProperty $entry 'ResultCode'; HResultHex = Get-WudReviewProperty $entry 'HResultHex'
+            SourceRef = ('{0}/Servicing/servicing.json#UpdateHistory[{1}]' -f $Context.PhaseLabel, $index)
+        })
+    }
+    $events = @(Get-WudReviewProperty $Tracking 'AllEvents' @())
+    $updates = New-Object Collections.ArrayList
+    $timeline = New-Object Collections.ArrayList
+    $keys = @((@($events) + @($history)) | Where-Object { ConvertTo-WudUpdateGuid (Get-WudReviewProperty $_ 'UpdateID') } | Group-Object { '{0}|{1}' -f (ConvertTo-WudUpdateGuid (Get-WudReviewProperty $_ 'UpdateID')), (Get-WudReviewProperty $_ 'RevisionNumber') })
+    foreach ($key in $keys) {
+        $id = ConvertTo-WudUpdateGuid (Get-WudReviewProperty $key.Group[0] 'UpdateID')
+        $revision = Get-WudReviewProperty $key.Group[0] 'RevisionNumber'
+        $keyEvents = @($events | Where-Object { $_.UpdateID -eq $id -and [string]$_.RevisionNumber -eq [string]$revision })
+        $keyHistory = @($history | Where-Object { $_.UpdateID -eq $id -and [string]$_.RevisionNumber -eq [string]$revision })
+        $knownServices = @((@($keyEvents) + @($keyHistory)) | ForEach-Object { ConvertTo-WudUpdateGuid (Get-WudReviewProperty $_ 'ServiceID') } | Where-Object { $_ } | Select-Object -Unique)
+        # Normally one update source is known. If distinct services report the
+        # same GUID/revision, keep their operations separate; unknown-source
+        # events form their own bucket rather than joining either service.
+        $serviceBuckets = if ($knownServices.Count -gt 1) { @('') + @($knownServices) } else { @('') }
+        foreach ($service in $serviceBuckets) {
+            $serviceEvents = @($keyEvents | Where-Object { $knownServices.Count -le 1 -or [string](ConvertTo-WudUpdateGuid $_.ServiceID) -eq $service })
+            $serviceHistory = @($keyHistory | Where-Object { $knownServices.Count -le 1 -or [string](ConvertTo-WudUpdateGuid $_.ServiceID) -eq $service })
+            if ($serviceEvents.Count -eq 0 -and $serviceHistory.Count -eq 0) { continue }
+            $title = @((@($serviceEvents) + @($serviceHistory)) | ForEach-Object { [string]$_.Title } | Where-Object { $_ } | Select-Object -First 1)
+            $identity = [pscustomobject]@{ Status = 'Locked'; UpdateID = $id; RevisionNumber = $revision; ServiceID = if ($service) { $service } elseif ($knownServices.Count -eq 1) { $knownServices[0] } else { $null }; Title = if ($title.Count) { $title[0] } else { $null } }
+            $target = Test-WudUpgradeIdentityMatch $identity $Tracking.Identity
+            $role = if ($target) { 'TargetUpgrade' } elseif ($identity.Title -and (Test-WudTargetUpgradeTitle $identity.Title $Context.TargetVersion)) { 'OtherTargetCandidate' } else { 'OtherUpdate' }
+            $timing = Get-WudUpgradeTimingModel -Context $Context -Tracking ([pscustomobject]@{ Identity = $identity; MatchedEvents = $serviceEvents; MatchedHistory = $serviceHistory }) -IncludeRecorderObservations $false
+            $latestEvent = @($serviceEvents | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
+            $latestHistory = @($serviceHistory | Sort-Object DateUtc -Descending | Select-Object -First 1)
+            $activityKey = '{0}.{1}' -f $id, $(if ($null -ne $revision) { $revision } else { 'revision-unknown' })
+            if ($knownServices.Count -gt 1) { $activityKey += '.' + $(if ($service) { $service } else { 'service-unknown' }) }
+            $null = $updates.Add([pscustomobject][ordered]@{
+                ActivityKey = $activityKey; UpdateID = $id; RevisionNumber = $revision; ServiceID = $identity.ServiceID; Title = $identity.Title; Role = $role
+                EventCount = $serviceEvents.Count; HistoryCount = $serviceHistory.Count
+                FirstObservedUtc = @(@($serviceEvents | ForEach-Object TimestampUtc) + @($serviceHistory | ForEach-Object DateUtc) | Sort-Object | Select-Object -First 1)[0]
+                LatestBoundary = if ($latestEvent.Count) { $latestEvent[0].Boundary } else { 'NotObserved' }
+                HistoryResult = if ($latestHistory.Count) { Get-WudOperationResultLabel $latestHistory[0].ResultCode } else { 'NotObserved' }
+                HistoryOperation = if ($latestHistory.Count) { $latestHistory[0].Operation } else { $null }
+                Timing = $timing; Events = $serviceEvents; History = $serviceHistory
+            })
+            foreach ($event in $serviceEvents) {
+                $null = $timeline.Add([pscustomobject][ordered]@{
+                    TimestampUtc = $event.TimestampUtc; ActivityKey = $activityKey; UpdateID = $id; RevisionNumber = $revision; ServiceID = $identity.ServiceID
+                    Role = $role; Boundary = $event.Boundary; EventId = $event.EventId; Title = $identity.Title; EvidenceReference = $event.SourceRef; TimingKind = 'SourceEvent'
+                })
+            }
+            foreach ($entry in $serviceHistory) {
+                $null = $timeline.Add([pscustomobject][ordered]@{
+                    TimestampUtc = $entry.DateUtc; ActivityKey = $activityKey; UpdateID = $id; RevisionNumber = $revision; ServiceID = $identity.ServiceID
+                    Role = $role; Boundary = 'HistoryResult: ' + (Get-WudOperationResultLabel $entry.ResultCode); EventId = $null; Title = $identity.Title; EvidenceReference = $entry.SourceRef; TimingKind = 'AppliedOperationHistory'
+                })
+            }
+        }
+    }
+    return [pscustomobject][ordered]@{
+        WindowStartUtc = $windowStart; Updates = @($updates | Sort-Object @{ Expression = { if ($_.Role -eq 'TargetUpgrade') { 0 } else { 1 } } }, FirstObservedUtc)
+        Timeline = @($timeline | Sort-Object TimestampUtc); UnattributedEventCount = @($events | Where-Object { -not $_.UpdateID }).Count
+        Interpretation = 'Each UpdateID/revision has independent operations and results. Conflicting known services are separate. Other updates never change the target upgrade outcome. No-ID device events and unmapped DO activity stay device context.'
     }
 }
 
@@ -746,6 +819,7 @@ function Invoke-WudFactAnalysis {
     $featureHistory = @($Context.UpgradeTracking.MatchedHistory)
     $currentServicing = Get-WudReviewProperty $currentInventory 'Servicing'
     $allUpdateHistory = @(Get-WudReviewProperty $currentServicing 'UpdateHistory' @())
+    $Context.UpdateActivity = Get-WudUpdateActivityModel -Context $Context -Tracking $Context.UpgradeTracking -AllHistory $allUpdateHistory
 
     $sequence = 0
     $decodedFacts = @{}
@@ -897,6 +971,7 @@ function Invoke-WudFactAnalysis {
         AllUpdateHistory = @($allUpdateHistory)
         UpgradeTracking = $Context.UpgradeTracking
         UpgradeTiming = $Context.UpgradeTiming
+        UpdateActivity = $Context.UpdateActivity
         InventoryDiff = $inventoryDiff
         Recorder = $Context.Recorder
         StatusModel = $Context.StatusModel
@@ -907,6 +982,7 @@ function Invoke-WudFactAnalysis {
         SchemaVersion = 3; SchemaSemanticVersion = '2.0.0'; ToolVersion = $Context.ToolVersion; RunId = $Context.RunId
         AnalysisMode = 'FactOnly'; Outcome = $Context.Outcome; StatusModel = $Context.StatusModel; Recorder = $Context.Recorder; ExitCode = $Context.ExitCode
         UpgradeTracking = $Context.UpgradeTracking; UpgradeTiming = $Context.UpgradeTiming
+        UpdateActivity = $Context.UpdateActivity
         Attempts = @($Context.Attempts); Facts = @($Context.Facts); Findings = @(); Timeline = @($Context.Timeline)
         ExcludedEvidence = @($Context.ExcludedEvidence); Inventory = $Context.Inventory
         StartedUtc = $Context.StartedUtc; CompletedUtc = $Context.CompletedUtc
@@ -994,6 +1070,7 @@ function Export-WudReviewBundle {
         UpgradeIdentity = Get-WudReviewProperty $Context.UpgradeTracking 'Identity'
         UpgradeTiming = $Context.UpgradeTiming
         Recorder = $recorderSummary
+        UpdateActivity = $Context.UpdateActivity
         CollectionComplete = $Context.CollectionComplete
         ValidatedWindowsUpdateAttempts = @($Context.Attempts | Where-Object IncludedForUpgradeReview).Count
         ExcludedSetupCandidates = @($Context.Attempts | Where-Object { -not $_.IncludedForUpgradeReview }).Count
@@ -1002,6 +1079,12 @@ function Export-WudReviewBundle {
     Write-WudJsonAtomic -Path (Join-Path $staging 'Case.json') -InputObject $case -Depth 20
     Write-WudJsonAtomic -Path (Join-Path $staging 'UpgradeIdentity.json') -InputObject (Get-WudReviewProperty $Context.UpgradeTracking 'Identity') -Depth 20
     Write-WudJsonAtomic -Path (Join-Path $staging 'UpgradeTiming.json') -InputObject $Context.UpgradeTiming -Depth 25
+    $traceCoverage = @(Get-ChildItem -LiteralPath $Context.EvidencePath -File -Recurse -Filter 'ETLCoverage.json' -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{ EvidenceRef = (Get-WudRelativePath -BasePath $Context.EvidencePath -Path $_.FullName).Replace('\', '/'); Coverage = Read-WudJson $_.FullName }
+    })
+    Write-WudJsonAtomic -Path (Join-Path $staging 'NativeTraceCoverage.json') -InputObject @($traceCoverage) -Depth 30
+    Write-WudJsonAtomic -Path (Join-Path $staging 'UpdateActivity.json') -InputObject $Context.UpdateActivity -Depth 30
+    Write-WudJsonLines -Path (Join-Path $staging 'AllUpdatesTimeline.jsonl') -Records @(Get-WudReviewProperty $Context.UpdateActivity 'Timeline' @())
     Write-WudJsonLines -Path (Join-Path $staging 'TargetUpdateEvents.jsonl') -Records @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @())
     Write-WudJsonAtomic -Path (Join-Path $staging 'Attempts.json') -InputObject @($Context.Attempts) -Depth 40
     Write-WudJsonAtomic -Path (Join-Path $staging 'Inventory.json') -InputObject $Context.Inventory -Depth 40
@@ -1031,6 +1114,7 @@ function Export-WudReviewBundle {
     })
     Export-WudReviewCsv -Records $factRows -Headers @('FactId', 'FactType', 'Category', 'ScopeStatus', 'TimestampUtc', 'AttemptId', 'Statement', 'Value', 'Code', 'Phase', 'Operation', 'EvidenceRef', 'ExcerptFile') -Path (Join-Path $staging 'Facts.csv')
     Export-WudReviewCsv -Records @($Context.Timeline) -Headers @('TimestampUtc', 'AttemptId', 'FactId', 'EventType', 'Code', 'Phase', 'Operation', 'Message', 'EvidenceReference', 'UpdateID', 'RevisionNumber', 'ScopeStatus', 'TimingKind') -Path (Join-Path $staging 'Timeline.csv')
+    Export-WudReviewCsv -Records @(Get-WudReviewProperty $Context.UpdateActivity 'Timeline' @()) -Headers @('TimestampUtc', 'ActivityKey', 'UpdateID', 'RevisionNumber', 'ServiceID', 'Role', 'Boundary', 'EventId', 'Title', 'EvidenceReference', 'TimingKind') -Path (Join-Path $staging 'AllUpdatesTimeline.csv')
 
     $evidenceIndex = New-Object Collections.ArrayList
     foreach ($item in @(Get-WudFileInventory -RootPath $Context.EvidencePath)) {
@@ -1060,7 +1144,7 @@ This archive is sensitive. It can contain device names, users, domains, paths, n
 
 Start with `Case.json`, `RecorderSummary.json`, `ProgressSamples.jsonl`, `Attempts.json`, `Facts.jsonl`, `Timeline.jsonl`, and `CollectionCoverage.json`. Recorder states are observations, not proof that a delay was caused by download, Setup, reboot, or user activity. Use `EvidenceIndex.jsonl` to resolve hashes and `Excerpts/` for bounded source text. Request `Evidence.zip` separately when full raw logs are necessary.
 
-`UpgradeIdentity.json` fixes the target UpdateID/revision. `TargetUpdateEvents.jsonl` contains matching lifecycle events; `UpdateEvents.jsonl` and `UpdateHistory.jsonl` retain other updates as context only. `UpgradeTiming.json` separates source-event boundaries, missing boundaries, and observed target-OS bounds. DO FileId is a file identity, not an update identity. SetupDiag statements with `ContextOnly` scope do not have a direct setup-log GUID link.
+`UpgradeIdentity.json` fixes the target UpdateID/revision. `TargetUpdateEvents.jsonl` contains matching lifecycle events. `UpdateActivity.json` and `AllUpdatesTimeline.csv`/`.jsonl` separate every observed GUID/revision with independent operations/results. Concurrent updates do not change the target outcome. `UpdateEvents.jsonl` and `UpdateHistory.jsonl` retain original context. `UpgradeTiming.json` separates source-event boundaries, missing boundaries, and observed target-OS bounds. DO FileId is a file identity, not an update identity. SetupDiag statements with `ContextOnly` scope do not have a direct setup-log GUID link. Raw ETLs, root coverage, and per-file capture status are in Evidence.zip; collection cannot recover traces Windows already deleted or guarantee a live trace was flushed.
 '@
     Write-WudText -Path (Join-Path $staging 'READ_ME_FIRST.md') -Text $readMe
     $prompt = @'
@@ -1126,4 +1210,4 @@ Never state root cause without quoting the exact evidence reference that support
     return $Context.ReviewBundle
 }
 
-Export-ModuleMember -Function @('Invoke-WudFactAnalysis', 'Export-WudReviewBundle', 'Get-WudSetupLogProfile', 'Set-WudAttemptScope', 'Get-WudUpgradeStatusModel', 'Get-WudFeatureUpdateHistory', 'Get-WudUpgradeTrackingModel', 'Get-WudUpgradeTimingModel')
+Export-ModuleMember -Function @('Invoke-WudFactAnalysis', 'Export-WudReviewBundle', 'Get-WudSetupLogProfile', 'Set-WudAttemptScope', 'Get-WudUpgradeStatusModel', 'Get-WudFeatureUpdateHistory', 'Get-WudUpgradeTrackingModel', 'Get-WudUpgradeTimingModel', 'Get-WudUpdateActivityModel')

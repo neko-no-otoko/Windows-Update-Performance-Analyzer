@@ -44,7 +44,8 @@ WUPA retains evidence needed to reconstruct Windows Update download, install, re
 - `$WINDOWS.~BT\Sources\Panther` and `Rollback`
 - `Windows\Logs\MoSetup` and existing SetupDiag results
 - Windows Update ETLs plus a readable conversion
-- USO and Delivery Optimization native logs
+- USO and Delivery Optimization native logs, including the NetworkService DO ETL directory
+- retained setup performance ETLs in Panther, NewOS, rollback, Windows.old and hook-copy locations (raw context until attributed)
 - native Setup, MoSetup, Windows Update, Update Orchestrator, Delivery Optimization, and System event channels
 - source/target build identity, storage/WinRE/BitLocker readiness, update policy, core update services, BITS, proxy, clock, problem devices, and update-critical drivers
 - state-boundary snapshots of only Panther, Rollback, and MoSetup evidence
@@ -63,6 +64,12 @@ Delivery Optimization FileId identifies a payload file, not the upgrade. Its dev
 
 See Microsoft's [update identifier documentation](https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs), [SetupDiag offline input behavior](https://learn.microsoft.com/en-us/windows/deployment/upgrade/setupdiag), and [Delivery Optimization status fields](https://learn.microsoft.com/en-us/windows/deployment/do/waas-delivery-optimization-monitor).
 
+The report's **Activity by UpdateID** section expands every observed update GUID/revision independently, with its title, update source, download/install intervals, retries, latest events and history results. The 25H2 target appears first. Concurrent drivers or security updates stay visible in their own groups and cannot change the target outcome. Conflicting known services are separated; events without a GUID stay device context. `UpdateActivity.json` and `AllUpdatesTimeline.csv` provide the same breakdown for external review.
+
+Native trace capture recursively attempts every retained `.etl` (including `.etl.old`, `.etl.bak`, and numeric rotations) in the configured Windows Update, USOShared/USOPrivate, both DO log locations, and setup roots. `ETLCoverage.json` inside Evidence.zip lists roots, files, hashes, missing sources and copy failures. Capture happens before log conversion. Final ETL capture has no age or per-file-size exclusion; phase-boundary checkpoints remain bounded and record skipped files. Live traces are copied without flushing/stopping services and labeled `CapturedUnflushed` or `ChangedDuringCapture`; successful copying is not proof of a complete or parseable ETW session. Windows-cleaned or inaccessible files cannot be recovered. No whole-disk ETL search or download-cache payload collection occurs. Windows\\Panther general deployment logs remain excluded; its retained ETLs are raw context only.
+
+Microsoft documents the [NetworkService DO trace path](https://learn.microsoft.com/en-us/windows/deployment/do/delivery-optimization-test) and [Panther setup performance ETL](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-log-files-and-event-logs?view=windows-11).
+
 For full live capture, cancel or finish an existing 3.0 monitoring run and start a new run with 3.1 before the upgrade. Opening a newer executable does not replace already-running scheduled-task code. After-the-fact analysis can only recover events Windows retained.
 
 ## Results
@@ -78,7 +85,8 @@ Start with:
 - `Report.html` — focused offline report
 - `ReviewBundle.zip` — compact drag-and-drop package for an approved external reviewer or AI utility
 - `Evidence.zip` — full retained raw evidence
-- `Summary.json`, `RecorderSummary.json`, `Facts.csv`, and `Timeline.csv` — normalized machine-readable records
+- `Summary.json`, `RecorderSummary.json`, `Facts.csv`, and `Timeline.csv` — target-focused normalized records
+- `UpdateActivity.json` and `AllUpdatesTimeline.csv` — independent activity/results for all observed update identities
 - `Collector.log` — collector execution history
 - `Manifest.json` and `Checksums.sha256` — provenance and integrity
 

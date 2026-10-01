@@ -39,7 +39,7 @@ Assert-WupaV300 ($collectors -notmatch "Name = 'systeminfo'" -and $collectors -n
 Assert-WupaV300 ($collectors -match "Get-DeliveryOptimizationLog" -and $collectors -match 'Select-Object -First 5000') 'Delivery Optimization readable records remain with a bounded result set'
 
 Assert-WupaV300 ([int]$settings.recorder.sampleIntervalSeconds -eq 60 -and [int]$settings.recorder.maximumCheckpoints -eq 8 -and [long]$settings.recorder.maximumCheckpointBytes -eq 67108864) 'Recorder retains 60-second sampling with bounded checkpoints'
-Assert-WupaV300 ($recorder -notmatch "WindowsUpdate-ETL'; Path" -and $recorder -notmatch "USOShared-Logs'; Path" -and $recorder -notmatch "EventLogs'\)") 'Boundary checkpoints no longer duplicate transport logs and event channels'
+Assert-WupaV300 ($recorder -match 'Get-WudNativeTraceSources' -and $recorder -match 'MaximumCheckpointBytes' -and $recorder -notmatch "EventLogs'\)") 'Boundary checkpoints preserve bounded native ETLs without duplicating event-channel exports'
 Assert-WupaV300 ($persistence -match "ProgramData 'WUPA'" -and $persistence -match "'\\WUPA\\'" -and $persistence -match '-Action Resume') 'Durable state and cross-reboot tasks use the WUPA lifecycle'
 
 Assert-WupaV300 ($report -match 'Windows Update Performance Analyzer · fact-only evidence' -and $report -match 'WUPA is an independent, diagnostic-only utility') 'Report uses the WUPA brand and factual interpretation boundary'

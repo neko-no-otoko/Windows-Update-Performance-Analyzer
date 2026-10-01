@@ -515,25 +515,35 @@ function Invoke-WudRecorderExternal {
 }
 
 function Copy-WudCheckpointNativeEvidence {
-    param([string]$CheckpointPath, [long]$MaximumFileBytes = 16777216, [long]$MaximumCheckpointBytes = 67108864)
+    param([string]$CheckpointPath, [long]$MaximumFileBytes = 16777216, [long]$MaximumCheckpointBytes = 67108864, [string]$RunPath)
     $records = New-Object Collections.ArrayList
     $copiedBytes = 0L
-    $sources = @(
+    $setupSources = @(
         @{ Name = 'WindowsBT-Panther'; Path = (Join-Path $env:SystemDrive '$WINDOWS.~BT\Sources\Panther') },
         @{ Name = 'WindowsBT-Rollback'; Path = (Join-Path $env:SystemDrive '$WINDOWS.~BT\Sources\Rollback') },
         @{ Name = 'Windows-MoSetup'; Path = (Join-Path $env:SystemRoot 'Logs\MoSetup') }
     )
+    $sources = @($setupSources) + @(Get-WudNativeTraceSources -RunPath $RunPath | Where-Object { $_.Name -notin @($setupSources | ForEach-Object { $_.Name }) })
     foreach ($source in $sources) {
-        if (-not (Test-Path -LiteralPath $source.Path)) {
-            $null = $records.Add([pscustomobject][ordered]@{ Source = $source.Path; Status = 'SourceAbsent'; Destination = $null; Length = $null; Sha256 = $null; Error = $null })
+        try { $sourceItem = Get-Item -LiteralPath $source.Path -Force -ErrorAction Stop }
+        catch {
+            $status = if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { 'SourceAbsent' } else { 'SourceUnavailable' }
+            $null = $records.Add([pscustomobject][ordered]@{ Source = $source.Path; Status = $status; Destination = $null; Length = $null; Sha256 = $null; Error = Get-WudErrorDetail $_ })
             continue
         }
-        $files = if ((Get-Item -LiteralPath $source.Path -Force).PSIsContainer) {
-            @(Get-ChildItem -LiteralPath $source.Path -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(?:log|xml|json|dmp)$' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 12)
+        $files = if ($sourceItem.PSIsContainer) {
+            $enumerationContext = [pscustomobject]@{ CollectionGaps = (New-Object Collections.ArrayList) }
+            $retained = @(Get-WudFileTreeSafe -RootPath $source.Path -Context $enumerationContext -Collector 'checkpoint-etl')
+            foreach ($gap in @($enumerationContext.CollectionGaps)) {
+                $null = $records.Add([pscustomobject]@{ Source = $gap.Source; Status = 'EnumerationIncomplete'; Destination = $null; Length = $null; Sha256 = $null; Error = $gap.Detail })
+            }
+            $etls = @($retained | Where-Object { $_.Name -match '(?i)\.etl(?:\.(?:old|bak|\d+))?$' } | Sort-Object LastWriteTimeUtc -Descending)
+            $setupFiles = if ($source.Name -in @($setupSources | ForEach-Object { $_.Name })) { @($retained | Where-Object { $_.Name -match '(?i)\.(?:log|xml|json|dmp)$' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 12) } else { @() }
+            @($etls) + @($setupFiles)
         }
-        else { @((Get-Item -LiteralPath $source.Path -Force)) }
+        else { @($sourceItem) }
         foreach ($file in $files) {
-            $relative = if ((Get-Item -LiteralPath $source.Path -Force).PSIsContainer) { Get-WudRelativePath -BasePath $source.Path -Path $file.FullName } else { $file.Name }
+            $relative = if ($sourceItem.PSIsContainer) { Get-WudRelativePath -BasePath $source.Path -Path $file.FullName } else { $file.Name }
             $destination = Join-Path (Join-Path $CheckpointPath ('Native\' + $source.Name)) $relative
             if ([long]$file.Length -gt $MaximumFileBytes) {
                 $null = $records.Add([pscustomobject][ordered]@{ Source = $file.FullName; Status = 'OversizedMetadataOnly'; Destination = $null; Length = $file.Length; Sha256 = $null; Error = 'Hash deferred to the final evidence collection to keep boundary checkpoints lightweight.' })
@@ -545,6 +555,12 @@ function Copy-WudCheckpointNativeEvidence {
             }
             try {
                 $null = New-WudDirectory -Path (Split-Path -Parent $destination)
+                if ($file.Name -match '(?i)\.etl(?:\.(?:old|bak|\d+))?$') {
+                    $record = Copy-WudNativeTraceFile -Source $file.FullName -Destination $destination
+                    $copiedBytes += [long]$record.CapturedLength
+                    $null = $records.Add($record)
+                    continue
+                }
                 Copy-Item -LiteralPath $file.FullName -Destination $destination -Force -ErrorAction Stop
                 $copiedBytes += [long]$file.Length
                 $null = $records.Add([pscustomobject][ordered]@{ Source = $file.FullName; Status = 'CopiedNative'; Destination = $destination; Length = $file.Length; Sha256 = Get-WudFileHashSafe $destination; Error = $null })
@@ -575,7 +591,7 @@ function Write-WudRecorderCheckpoint {
     $timestamp = (ConvertTo-WudUtcDateTime (Get-WudRecorderProperty $Sample 'TimestampUtc')).ToString('yyyyMMddTHHmmssfffZ')
     $path = New-WudDirectory -Path (Join-Path $checkpointRoot ("{0}-{1}" -f $timestamp, $safeState))
     Write-WudJsonAtomic -Path (Join-Path $path 'sample.json') -InputObject $Sample -Depth 30
-    $native = @(Copy-WudCheckpointNativeEvidence -CheckpointPath $path -MaximumFileBytes $MaximumFileBytes -MaximumCheckpointBytes $MaximumCheckpointBytes)
+    $native = @(Copy-WudCheckpointNativeEvidence -CheckpointPath $path -MaximumFileBytes $MaximumFileBytes -MaximumCheckpointBytes $MaximumCheckpointBytes -RunPath $RunPath)
     $manifest = [pscustomobject][ordered]@{
         SchemaVersion = 1; Reason = $Reason; RecorderState = $state; TimestampUtc = Get-WudRecorderProperty $Sample 'TimestampUtc'
         NativeFiles = @($native); EventExports = @(); CompletedUtc = [DateTime]::UtcNow.ToString('o')

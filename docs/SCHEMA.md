@@ -19,6 +19,7 @@ Core properties are:
 | `Recorder` | Sampling window, state boundaries, and Delivery Optimization observation rollups. |
 | `UpgradeIdentity` | `Locked`, `Ambiguous`, `Incomplete`, or `NotObserved`; target UpdateID GUID/revision, available service identity, discovery evidence, and candidates. |
 | `UpgradeTiming` | Identity-matched operation sessions with source-event start/end, missing-boundary labels, elapsed seconds, and separate target-OS observation bounds. |
+| `UpdateActivity` | Independent GUID/revision/service activity groups and a combined identity-tagged timeline. Other update outcomes never change the target outcome. |
 | `Facts`, `FactCounts` | Direct records and rollups by fact type and scope. |
 | `Attempts`, `AttemptScope` | Setup candidates, exact gates, classifications, and validated/excluded counts. |
 | `ExcludedEvidence` | Candidate evidence prevented from entering upgrade conclusions and the exact reason. |
@@ -42,6 +43,10 @@ DeploymentSource = WindowsUpdateConfirmed | OtherConfirmed | Unattributed
 ```
 
 ## Fact object
+
+`UpdateActivity.json` contains every observed GUID/revision group with independent `Timing`, `Events` and `History`. `AllUpdatesTimeline.csv` (also `.jsonl` in ReviewBundle) tags each row with `ActivityKey`, `UpdateID`, `RevisionNumber`, `ServiceID`, and `Role`. Known conflicting services split groups; no-ID events remain raw device context. These additive exports never alter the target outcome.
+
+`ETLCoverage.json` in each native snapshot lists trace roots and files, including byte length, SHA-256, and `CapturedUnflushed`, `ChangedDuringCapture`, `PartialCapture`, or `CopyFailed`. An unflushed live copy is not proof of a complete/parseable trace. Absent or unenumerable roots are explicit. ReviewBundle's `NativeTraceCoverage.json` aggregates these records for review. Checkpoint capacity exclusions are recorded separately in checkpoint manifests. Trace files remain in Evidence.zip, not in the compact review bundle.
 
 | Property | Meaning |
 |---|---|

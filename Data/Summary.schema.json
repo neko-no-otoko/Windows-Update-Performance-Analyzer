@@ -112,6 +112,15 @@
       },
       "additionalProperties": true
     },
+    "UpdateActivity": {
+      "type": ["object", "null"],
+      "properties": {
+        "Updates": { "type": "array", "items": { "type": "object" } },
+        "Timeline": { "type": "array", "items": { "type": "object" } },
+        "UnattributedEventCount": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
     "ExitCode": { "enum": [0, 10, 20, 30] },
     "Device": {
       "type": "object",

@@ -76,6 +76,12 @@ try {
     $recorder = New-WudDirectory (Join-Path $context.EvidencePath 'Recorder')
     foreach ($event in $events) { Write-WudJsonLine -Path (Join-Path $recorder 'UpdateEvents.jsonl') -InputObject $event -Depth 12 }
     $history = @([pscustomobject]@{ Date = '2026-10-01T10:10:00Z'; Title = $events[6].Title; UpdateID = $events[6].UpdateID; RevisionNumber = 101; Operation = '1'; ResultCode = '4' })
+    $securityEvents = @(
+        (New-UpdateEvent 44 '2026-10-01T10:01:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -RecordId 8),
+        (New-UpdateEvent 17 '2026-10-01T10:02:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -Keywords '0x8000000000004004' -RecordId 9),
+        (New-UpdateEvent 43 '2026-10-01T10:03:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -Keywords '0x8000000000002008' -RecordId 10)
+    )
+    foreach ($event in $securityEvents) { Write-WudJsonLine -Path (Join-Path $recorder 'UpdateEvents.jsonl') -InputObject $event -Depth 12 }
     $context.Inventory['Identity'] = [pscustomobject]@{ DisplayVersion = '25H2'; CurrentBuild = '26200'; WindowsImageState = 'IMAGE_STATE_COMPLETE' }
     $context.Inventory['Servicing'] = [pscustomobject]@{ UpdateHistory = $history }
     Assert-Upgrade (@(Get-WudFeatureUpdateHistory $context ([pscustomobject]$context.Inventory)).Count -eq 0) 'WUA history security titles do not become feature history'
@@ -113,6 +119,14 @@ try {
     $setupMetadata = Read-WudJson -Path (Join-Path $context.SnapshotPath 'SetupDiag/setupdiag-tool.json')
     Assert-Upgrade (-not $setupMetadata.Executed -and $setupMetadata.RejectedInputs.Count -gt 0) 'SetupDiag refuses a recursive input root containing unrelated setup sessions'
     $null = Invoke-WudFactAnalysis $context
+    $updates = @($context.UpdateActivity.Updates)
+    Assert-Upgrade ($updates.Count -eq 2 -and $updates[0].Role -eq 'TargetUpgrade' -and $updates[1].Role -eq 'OtherUpdate') 'Report groups target and concurrent security update under separate GUIDs'
+    Assert-Upgrade ($updates[0].EventCount -eq 6 -and $updates[1].EventCount -eq 4 -and $updates[1].Timing.Sessions[0].ElapsedSeconds -eq 60 -and $updates[0].Timing.Sessions[0].ElapsedSeconds -eq 180) 'Overlapping downloads retain independent per-update intervals'
+    Assert-Upgrade ($updates[1].HistoryResult -eq 'Failed' -and $updates[1].Timing.Sessions[1].ElapsedSeconds -eq 420 -and $context.StatusModel.AttemptOutcome -eq 'Succeeded') 'Other update failure is visible without changing the observed target success'
+    $unattributed = $events[0].PSObject.Copy(); $unattributed.UpdateID = $null
+    $knownServiceEvent = $events[0].PSObject.Copy(); $knownServiceEvent.ServiceID = $serviceLock.ServiceID
+    $multi = Get-WudUpdateActivityModel $context ([pscustomobject]@{ Identity = $identity; WindowStartUtc = '2026-10-01T09:00:00Z'; AllEvents = @($knownServiceEvent, $changedRevision, $serviceMismatch, $unattributed) })
+    Assert-Upgrade ($multi.Updates.Count -eq 3 -and $multi.UnattributedEventCount -eq 1) 'Revisions and conflicting service identities have separate buckets; no-ID events remain context'
     Assert-Upgrade (@($context.Timeline | Where-Object { $_.EventType -eq 'TargetUpdateLifecycle' }).Count -eq 6) 'Final analysis includes exactly the target lifecycle events'
     Assert-Upgrade (@($context.Facts | Where-Object { $_.Category -eq 'WindowsUpdateHistory' }).Count -eq 0) 'Concurrent security failure never becomes a feature-upgrade history fact'
     Assert-Upgrade (@($context.Timeline | Where-Object { $_.Message -match 'historical record' }).Count -eq 0) 'Old records in a newly modified setup log remain outside the monitored timeline'
@@ -125,6 +139,46 @@ try {
     Assert-Upgrade ($summary.UpgradeIdentity.UpdateID -eq $identity.UpdateID -and $summary.UpgradeTiming.Sessions.Count -eq 3) 'Summary exports locked identity and phase intervals'
     Assert-Upgrade ((Get-Content $report -Raw) -match 'Target upgrade identity and phase timing') 'HTML renders the identity-scoped timing table'
     Assert-Upgrade (Test-Path (Join-Path $context.OutputPath 'UpgradeTiming.json')) 'Standalone phase timing artifact is included'
+    Assert-Upgrade ($summary.UpdateActivity.Updates.Count -eq 2 -and (Test-Path (Join-Path $context.OutputPath 'AllUpdatesTimeline.csv'))) 'Per-update normalized data and combined identity-tagged timeline are exported'
+    Assert-Upgrade ((Get-Content $report -Raw) -match 'Activity by UpdateID' -and (Get-Content $report -Raw) -match $events[6].UpdateID) 'HTML displays concurrent update identities and results'
+
+    $traceRoot = New-WudDirectory (Join-Path $root 'trace-fixtures')
+    $traceSource = New-WudDirectory (Join-Path $traceRoot 'nested')
+    foreach ($name in @('active.etl', 'retained.etl.old', 'rotated.etl.1', 'not-a-trace.txt')) { Write-WudText -Path (Join-Path $traceSource $name) -Text ('native trace fixture ' + $name) }
+    (Get-Item (Join-Path $traceSource 'retained.etl.old')).LastWriteTimeUtc = [DateTime]::Parse('2019-01-01T00:00:00Z').ToUniversalTime()
+    & $collectorModule { param($ctx, $src) Invoke-WudNativeTraceCollector -Context $ctx -Sources @(@{ Name = 'Fixture-ETL'; Path = $src }, @{ Name = 'Missing-ETL'; Path = (Join-Path $src 'absent') }) } $context $traceRoot
+    $coverage = Read-WudJson (Join-Path $context.SnapshotPath 'ETLCoverage.json')
+    Assert-Upgrade ($coverage.Files.Count -eq 3 -and $coverage.Roots[1].Status -eq 'SourceAbsent') 'All retained nested/rotated ETLs are attempted without age filtering and missing roots are explicit'
+    foreach ($trace in $coverage.Files) { Assert-Upgrade ($trace.Status -eq 'CapturedUnflushed' -and $trace.Sha256 -eq (Get-WudFileHashSafe $trace.Source)) 'Raw native trace copy is byte-identical and hash-indexed' }
+    $missingCopy = Copy-WudNativeTraceFile -Source (Join-Path $traceRoot 'missing.etl') -Destination (Join-Path $traceRoot 'missing-copy.etl')
+    Assert-Upgrade ($missingCopy.Status -eq 'CopyFailed' -and $missingCopy.Error) 'Missing or unopenable trace does not claim successful capture'
+    $traceSources = @(Get-WudNativeTraceSources -WindowsRoot $traceRoot -SystemDrive $traceRoot -ProgramDataRoot $traceRoot -RunPath $context.RunPath)
+    Assert-Upgrade (@($traceSources | Where-Object { $_.Path -match 'NetworkService.*DeliveryOptimization.*Logs' }).Count -eq 1 -and @($traceSources | Where-Object { $_.Name -eq 'Windows-Panther-ETL-Context' }).Count -eq 1) 'Canonical NetworkService DO and context-only Panther performance ETLs are included'
+    $originalEnvironment = @{ SystemRoot = $env:SystemRoot; SystemDrive = $env:SystemDrive; ProgramData = $env:ProgramData }
+    try {
+        $env:SystemRoot = $traceRoot; $env:SystemDrive = $traceRoot; $env:ProgramData = $traceRoot
+        $checkpointSource = New-WudDirectory (Join-Path $traceRoot 'Logs/WindowsUpdate')
+        for ($n = 0; $n -lt 15; $n++) { Write-WudText -Path (Join-Path $checkpointSource "trace-$n.etl") -Text 'trace checkpoint fixture' }
+        $checkpointRecords = @(& (Get-Module Recorder) { param($dest) Copy-WudCheckpointNativeEvidence -CheckpointPath $dest } (Join-Path $root 'checkpoint'))
+        Assert-Upgrade (@($checkpointRecords | Where-Object { $_.Status -eq 'CapturedUnflushed' }).Count -eq 15) 'Checkpoint ETLs are not silently limited to the twelve-file setup-log selection'
+        $boundedRecords = @(& (Get-Module Recorder) { param($dest) Copy-WudCheckpointNativeEvidence -CheckpointPath $dest -MaximumCheckpointBytes 1 } (Join-Path $root 'bounded-checkpoint'))
+        Assert-Upgrade (@($boundedRecords | Where-Object { $_.Status -eq 'CheckpointCapacityReached' }).Count -eq 15) 'Capacity-limited checkpoint records every excluded native trace'
+    }
+    finally { $env:SystemRoot = $originalEnvironment.SystemRoot; $env:SystemDrive = $originalEnvironment.SystemDrive; $env:ProgramData = $originalEnvironment.ProgramData }
+    if (Test-WudIsWindows) {
+        $lockedPath = Join-Path $traceSource 'active.etl'
+        $exclusive = [IO.File]::Open($lockedPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        try {
+            $lockedCopy = Copy-WudNativeTraceFile -Source $lockedPath -Destination (Join-Path $traceRoot 'locked-copy.etl')
+            Assert-Upgrade ($lockedCopy.Status -eq 'CopyFailed' -and $lockedCopy.Error) 'Exclusively locked ETL is reported as a failure without stopping its writer'
+        }
+        finally { $exclusive.Dispose() }
+    }
+    $null = Export-WudReviewBundle $context
+    $null = Export-WudReportArtifacts $context
+    $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $context.OutputPath 'Evidence.zip'))
+    try { Assert-Upgrade ($null -ne $archive.GetEntry($coverage.Files[0].EvidenceRef) -and $null -ne $archive.GetEntry('Forensic/ETLCoverage.json')) 'Final evidence archive contains raw ETL bytes and per-file capture coverage' }
+    finally { $archive.Dispose() }
     Write-Host 'All upgrade identity and phase timing fixture tests passed.'
 }
 finally { if (Test-Path $root) { Remove-Item -LiteralPath $root -Recurse -Force } }

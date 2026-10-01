@@ -265,6 +265,7 @@ function New-WudSummaryObject {
         Recorder           = $Context.Recorder
         UpgradeIdentity    = Get-WudProperty $Context.UpgradeTracking 'Identity'
         UpgradeTiming      = $Context.UpgradeTiming
+        UpdateActivity     = $Context.UpdateActivity
         ExitCode           = $Context.ExitCode
         Device             = [pscustomobject][ordered]@{
             ComputerName = Get-WudProperty $currentIdentity 'ComputerName'
@@ -588,6 +589,25 @@ function Build-WudFactReportHtml {
     if (@(Get-WudProperty $upgradeTiming 'Sessions' @()).Count -eq 0) { Add-WudHtmlLine $builder '<tr><td colspan="6">No identity-matched phase boundary was available. Missing timestamps are unknown.</td></tr>' }
     $targetObserved = Get-WudProperty $upgradeTiming 'TargetOsFirstObserved'
     Add-WudHtmlLine $builder ('</tbody></table></div><p><strong>Target OS first observed:</strong> {0} &middot; <strong>transition bounds:</strong> {1} to {2}</p><p>Windows Update install success is an applied-operation result. The target OS observation is the separate post-reboot boundary. Device-wide DO counters below include unrelated transfers unless an explicit UpdateID mapping exists.</p></section>' -f (ConvertTo-WudHtmlText (Get-WudProperty $targetObserved 'FirstObservedUtc')), (ConvertTo-WudHtmlText (Get-WudProperty $targetObserved 'LowerBoundUtc')), (ConvertTo-WudHtmlText (Get-WudProperty $targetObserved 'UpperBoundUtc')))
+    $activity = Get-WudProperty $Summary 'UpdateActivity'
+    Add-WudHtmlLine $builder '<section class="panel"><h2>Activity by UpdateID</h2><p class="section-note">Each GUID and revision has independent download/install operations and results. Other update failures do not change the 25H2 outcome. Expand an update to inspect its boundaries and evidence.</p>'
+    foreach ($update in @(Get-WudProperty $activity 'Updates' @())) {
+        Add-WudHtmlLine $builder ('<details class="finding-card"{0}><summary>{1} &mdash; {2}</summary><div class="finding-body"><p><strong>UpdateID:</strong> <code>{3}</code> &middot; <strong>Revision:</strong> {4} &middot; <strong>Service:</strong> <code>{5}</code></p><p>Latest event: {6} &middot; latest history result: {7} (operation {8}) &middot; {9} source events</p><div class="table-wrap"><table><thead><tr><th>Phase</th><th>Start UTC / type</th><th>End UTC / type</th><th>Elapsed seconds</th><th>Result</th><th>Evidence</th></tr></thead><tbody>' -f $(if ($update.Role -eq 'TargetUpgrade') { ' open' } else { '' }), (ConvertTo-WudHtmlText $update.Title), (ConvertTo-WudHtmlText $update.Role), (ConvertTo-WudHtmlText $update.UpdateID), (ConvertTo-WudHtmlText $update.RevisionNumber), (ConvertTo-WudHtmlText $update.ServiceID), (ConvertTo-WudHtmlText $update.LatestBoundary), (ConvertTo-WudHtmlText $update.HistoryResult), (ConvertTo-WudHtmlText $update.HistoryOperation), $update.EventCount)
+        foreach ($session in @($update.Timing.Sessions)) {
+            Add-WudHtmlLine $builder ('<tr><td>{0}</td><td>{1}<br>{2}</td><td>{3}<br>{4}</td><td>{5}</td><td>{6}</td><td><code>{7}</code><br><code>{8}</code></td></tr>' -f (ConvertTo-WudHtmlText $session.Phase), (ConvertTo-WudHtmlText $session.StartUtc), (ConvertTo-WudHtmlText $session.StartKind), (ConvertTo-WudHtmlText $session.EndUtc), (ConvertTo-WudHtmlText $session.EndKind), (ConvertTo-WudHtmlText $session.ElapsedSeconds), (ConvertTo-WudHtmlText $session.Result), (ConvertTo-WudHtmlText $session.StartEvidenceRef), (ConvertTo-WudHtmlText $session.EndEvidenceRef))
+        }
+        if (@($update.Timing.Sessions).Count -eq 0) { Add-WudHtmlLine $builder '<tr><td colspan="6">No download/install boundaries retained for this update.</td></tr>' }
+        Add-WudHtmlLine $builder '</tbody></table></div><ul class="compact-list">'
+        foreach ($event in @($update.Events)) {
+            Add-WudHtmlLine $builder ('<li>{0}: {1} &mdash; <code>{2}</code></li>' -f (ConvertTo-WudHtmlText $event.TimestampUtc), (ConvertTo-WudHtmlText $event.Boundary), (ConvertTo-WudHtmlText $event.SourceRef))
+        }
+        foreach ($entry in @($update.History)) {
+            Add-WudHtmlLine $builder ('<li>{0}: history operation {1}, result {2}, HRESULT {3} &mdash; <code>{4}</code></li>' -f (ConvertTo-WudHtmlText $entry.DateUtc), (ConvertTo-WudHtmlText $entry.Operation), (ConvertTo-WudHtmlText $entry.ResultCode), (ConvertTo-WudHtmlText $entry.HResultHex), (ConvertTo-WudHtmlText $entry.SourceRef))
+        }
+        Add-WudHtmlLine $builder '</ul></div></details>'
+    }
+    if (@(Get-WudProperty $activity 'Updates' @()).Count -eq 0) { Add-WudHtmlLine $builder '<p>No update identities were retained in this observation window.</p>' }
+    Add-WudHtmlLine $builder ('<p>Lifecycle events without an UpdateID: {0}. Unidentified events and unmapped DO transfers remain device context, not assigned to an update.</p></section>' -f (ConvertTo-WudHtmlText (Get-WudProperty $activity 'UnattributedEventCount' 0)))
     $delivery = Get-WudProperty $recorder 'DeliveryOptimization'
     Add-WudHtmlLine $builder '<section class="panel"><h2>Persistent progress record</h2><p class="section-note">Samples are taken every 60 seconds by default. Timestamps and byte counters are observations; unobserved intervals remain unclassified.</p><section class="summary-grid">'
     Add-WudHtmlLine $builder ('<div class="metric"><div class="metric-label">Samples</div><div class="metric-value">{0}</div><div class="metric-detail">{1} to {2}</div></div>' -f (ConvertTo-WudHtmlText (Get-WudProperty $recorder 'SampleCount' 0)), (ConvertTo-WudHtmlText (Get-WudProperty $recorder 'FirstSampleUtc')), (ConvertTo-WudHtmlText (Get-WudProperty $recorder 'LastSampleUtc')))
@@ -732,6 +752,14 @@ function Export-WudReportArtifacts {
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'RecorderSummary.json') -InputObject $recorderSummary -Depth 30
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'UpgradeIdentity.json') -InputObject (Get-WudProperty $Context.UpgradeTracking 'Identity') -Depth 20
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'UpgradeTiming.json') -InputObject $Context.UpgradeTiming -Depth 25
+    Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'UpdateActivity.json') -InputObject $Context.UpdateActivity -Depth 30
+    $allUpdateHeaders = @('TimestampUtc', 'ActivityKey', 'UpdateID', 'RevisionNumber', 'ServiceID', 'Role', 'Boundary', 'EventId', 'Title', 'EvidenceReference', 'TimingKind')
+    $allUpdateRows = @(Get-WudProperty $Context.UpdateActivity 'Timeline' @() | ForEach-Object {
+        $event = $_; $row = [ordered]@{}
+        foreach ($header in $allUpdateHeaders) { $row[$header] = ConvertTo-WudCsvCell (Get-WudProperty $event $header) }
+        [pscustomobject]$row
+    })
+    Export-WudCsvContract -Rows $allUpdateRows -Headers $allUpdateHeaders -Path (Join-Path $Context.OutputPath 'AllUpdatesTimeline.csv')
     foreach ($name in @('ProgressSamples.jsonl', 'StateTransitions.jsonl')) {
         $source = Join-Path $recorderRoot $name
         if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $Context.OutputPath $name) -Force }
@@ -810,12 +838,12 @@ function Export-WudReportArtifacts {
     })
     Export-WudCsvContract -Rows $timelineRows -Headers $timelineHeaders -Path (Join-Path $Context.OutputPath 'Timeline.csv')
     if (Test-Path -LiteralPath $Context.LogPath) { Copy-Item -LiteralPath $Context.LogPath -Destination (Join-Path $Context.OutputPath 'Collector.log') -Force }
-    $preSummaryArtifacts = @('Evidence.zip', 'ReviewBundle.zip', 'Inventory.json', 'Attempts.json', 'ExcludedEvidence.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'Collector.log') | ForEach-Object { Get-WudArtifactRecord -Path (Join-Path $Context.OutputPath $_) -BasePath $Context.OutputPath } | Where-Object { $_ }
+    $preSummaryArtifacts = @('Evidence.zip', 'ReviewBundle.zip', 'Inventory.json', 'Attempts.json', 'ExcludedEvidence.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'UpdateActivity.json', 'AllUpdatesTimeline.csv', 'Collector.log') | ForEach-Object { Get-WudArtifactRecord -Path (Join-Path $Context.OutputPath $_) -BasePath $Context.OutputPath } | Where-Object { $_ }
     $summary = New-WudSummaryObject -Context $Context -CollectorRecords $collectorRecords -ArtifactRecords $preSummaryArtifacts
     Write-WudJsonAtomic -Path (Join-Path $Context.OutputPath 'Summary.json') -InputObject $summary -Depth 40
     $html = if ($summary.AnalysisMode -eq 'FactOnly') { Build-WudFactReportHtml -Context $Context -Summary $summary -EvidenceManifest $evidenceManifest -CollectorRecords $collectorRecords } else { Build-WudReportHtml -Context $Context -Summary $summary -EvidenceManifest $evidenceManifest -CollectorRecords $collectorRecords }
     Write-WudText -Path (Join-Path $Context.OutputPath 'Report.html') -Text $html
-    $artifactFiles = @('Report.html', 'Summary.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'Attempts.json', 'ExcludedEvidence.json', 'Inventory.json', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'ReviewBundle.zip', 'Evidence.zip', 'Collector.log')
+    $artifactFiles = @('Report.html', 'Summary.json', 'Facts.csv', 'Findings.csv', 'Timeline.csv', 'Attempts.json', 'ExcludedEvidence.json', 'Inventory.json', 'RecorderSummary.json', 'ProgressSamples.jsonl', 'StateTransitions.jsonl', 'Checkpoints.json', 'UpgradeIdentity.json', 'UpgradeTiming.json', 'UpdateActivity.json', 'AllUpdatesTimeline.csv', 'ReviewBundle.zip', 'Evidence.zip', 'Collector.log')
     $artifactManifest = @($artifactFiles | ForEach-Object { Get-WudArtifactRecord -Path (Join-Path $Context.OutputPath $_) -BasePath $Context.OutputPath } | Where-Object { $_ })
     $sourceMappings = Get-WudEvidenceSourceMappings -Context $Context
     $manifest = [pscustomobject][ordered]@{

@@ -2,6 +2,8 @@
 
 ## 3.1.0 — 2026-10-01
 
+- Add independent per-UpdateID/revision activity groups to HTML, JSON and CSV exports; keep concurrent update outcomes separate from the target. Preserve conflicting known update services and no-ID context explicitly.
+- Capture all retained native/rotated ETLs recursively in focused WU/USO/DO/setup roots before conversion, including the canonical NetworkService DO location and context-only Panther/NewOS traces. Add per-file/root coverage and hashes; bounded checkpoints preserve ETLs where capacity allows. Do not flush/stop services or claim a live trace is complete.
 - Lock target feature-update identity using UpdateID/revision and available service identity; persist across reboot and exclude unrelated quality, security, driver, .NET, and other-release updates. Ambiguous identities are not selected automatically.
 - Capture informational Windows Update lifecycle XML incrementally from System and WindowsUpdateClient operational channels, with explicit query coverage and bounded final recovery.
 - Add identity-matched download/install operation intervals, missing-boundary labels, and separate post-reboot target-OS observation bounds to HTML, Summary.json, standalone JSON, and ReviewBundle.

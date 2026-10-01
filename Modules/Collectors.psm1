@@ -504,6 +504,39 @@ function Copy-WudEvidenceItem {
     }
 }
 
+function Invoke-WudNativeTraceCollector {
+    param($Context, $Sources = @(Get-WudNativeTraceSources -RunPath $Context.RunPath))
+    $roots = New-Object Collections.ArrayList
+    $files = New-Object Collections.ArrayList
+    foreach ($source in $Sources) {
+        try { $null = Get-Item -LiteralPath $source.Path -Force -ErrorAction Stop }
+        catch {
+            $status = if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { 'SourceAbsent' } else { 'SourceUnavailable' }
+            $null = $roots.Add([pscustomobject]@{ Source = $source.Path; Status = $status; ObservedFiles = 0; Error = Get-WudErrorDetail $_ })
+            $null = Add-WudCollectionGap -Context $Context -Collector 'native-etl' -Source $source.Path -Status $status -Detail (Get-WudErrorDetail $_)
+            continue
+        }
+        $gapsBefore = @($Context.CollectionGaps).Count
+        $nativeFiles = @(Get-WudFileTreeSafe -RootPath $source.Path -Context $Context -Collector 'native-etl' | Where-Object { $_.Name -match '(?i)\.etl(?:\.(?:old|bak|\d+))?$' })
+        $rootStatus = if (@($Context.CollectionGaps).Count -gt $gapsBefore) { 'EnumerationIncomplete' } elseif ($nativeFiles.Count) { 'Enumerated' } else { 'NoRetainedETL' }
+        $null = $roots.Add([pscustomobject]@{ Source = $source.Path; Status = $rootStatus; ObservedFiles = $nativeFiles.Count; Error = $null })
+        foreach ($file in $nativeFiles) {
+            $relative = Get-WudRelativePath -BasePath $source.Path -Path $file.FullName
+            $destination = Join-Path (Join-Path $Context.SnapshotPath ('Raw/' + $source.Name)) $relative
+            $record = Copy-WudNativeTraceFile -Source $file.FullName -Destination $destination
+            $record | Add-Member -NotePropertyName EvidenceRef -NotePropertyValue (Get-WudRelativePath -BasePath $Context.EvidencePath -Path $destination).Replace('\', '/')
+            $null = $files.Add($record)
+            if ($record.Status -in @('CopyFailed', 'PartialCapture', 'ChangedDuringCapture') -or -not $record.Sha256) {
+                $null = Add-WudCollectionGap -Context $Context -Collector 'native-etl' -Source $file.FullName -Status $record.Status -Detail $(if ($record.Error) { $record.Error } else { 'The source changed while capturing, the captured stream is partial, or its hash could not be calculated. Retained bytes are preserved.' })
+            }
+        }
+    }
+    Write-WudJsonAtomic -Path (Join-Path $Context.SnapshotPath 'ETLCoverage.json') -InputObject ([pscustomobject][ordered]@{
+        CapturedUtc = [DateTime]::UtcNow.ToString('o'); Roots = @($roots); Files = @($files)
+        Interpretation = 'All retained ETL/ETL.old/ETL.bak/ETL.numeric files in the listed update and setup roots are attempted recursively without timestamp or per-file-size filters. Raw traces may span multiple updates or imaging. CapturedUnflushed does not guarantee ETW buffers were committed or the trace is parseable. Deleted logs cannot be recovered. Services, ACLs and trace sessions are not changed.'
+    }) -Depth 20
+}
+
 function Invoke-WudRawEvidenceCollector {
     param($Context)
     $drive = $env:SystemDrive
@@ -532,6 +565,9 @@ function Invoke-WudRawEvidenceCollector {
         if (-not $present) { $null = Add-WudCollectionGap -Context $Context -Collector 'raw-evidence' -Source $source.Path -Status 'Missing' -Detail 'The configured evidence source was not present at collection time.' }
         $null = $copyResults.Add([pscustomobject][ordered]@{ Source = $source.Path; Destination = $source.Name; Present = $present; Copied = $copied })
     }
+    # Native ETLs are preserved before readable conversions. This also covers
+    # NetworkService DO, retained NewOS traces and Panther performance ETLs.
+    Invoke-WudNativeTraceCollector -Context $Context
     if ($Context.Mode -in @('Resume', 'Finalize', 'Forensic')) {
         $rawRoot = Join-Path $Context.SnapshotPath 'Raw'
         $coreSetupFiles = @(Get-ChildItem -LiteralPath $rawRoot -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
@@ -550,7 +586,14 @@ function Invoke-WudWindowsUpdateLogCollector {
     $path = New-WudDirectory -Path (Join-Path $Context.SnapshotPath 'WindowsUpdate')
     $logPath = Join-Path $path 'WindowsUpdate.log'
     $escaped = $logPath.Replace("'", "''")
-    $script = "Get-WindowsUpdateLog -LogPath '$escaped' -ErrorAction Stop | Out-Null"
+    $etlRoot = Join-Path $Context.SnapshotPath 'Raw/WindowsUpdate-ETL'
+    $escapedRoot = $etlRoot.Replace("'", "''")
+    $script = "`$etlFiles = @(Get-ChildItem -LiteralPath '$escapedRoot' -File -Recurse -Filter '*.etl' -ErrorAction Stop | ForEach-Object { `$_.FullName }); if (`$etlFiles.Count -eq 0) { throw 'No captured Windows Update ETL inputs are available.' }; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null"
+    Write-WudJsonAtomic -Path (Join-Path $path 'conversion-inputs.json') -InputObject ([pscustomobject]@{
+        Provider = 'Get-WindowsUpdateLog'; Source = 'CapturedSnapshot'; InputRoot = $etlRoot
+        Files = @(Get-ChildItem -LiteralPath $etlRoot -File -Recurse -Filter '*.etl' -ErrorAction SilentlyContinue | ForEach-Object { Get-WudRelativePath -BasePath $Context.EvidencePath -Path $_.FullName })
+        Note = 'Only the staged snapshot is decoded. Rotated .etl.old/.bak/numeric names remain raw evidence. No service flush is requested.'
+    })
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $null = Invoke-WudProcess -Context $Context -FilePath $powerShell -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $script) -Name 'convert-windows-update-log' -TimeoutSeconds ([int]$Context.Settings.timeoutsSeconds.windowsUpdateLog) -ExpectedArtifacts @($logPath)
 
@@ -573,7 +616,12 @@ function Invoke-WudWindowsUpdateLogCollector {
         try {
             $logProvider.Status = 'Available'
             $logProvider.Error = $null
-            $logProvider.Records = @(Get-DeliveryOptimizationLog -ErrorAction Stop | Select-Object -First 5000)
+            $doFiles = @(@('DeliveryOptimization-Logs', 'DeliveryOptimization-NetworkService-Logs') | ForEach-Object {
+                Get-ChildItem -LiteralPath (Join-Path $Context.SnapshotPath ('Raw/' + $_)) -File -Recurse -Filter '*.etl' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+            })
+            if ($doFiles.Count -eq 0) { throw 'No captured Delivery Optimization ETL inputs are available.' }
+            $logProvider['InputFiles'] = @($doFiles | ForEach-Object { Get-WudRelativePath -BasePath $Context.EvidencePath -Path $_ })
+            $logProvider.Records = @(Get-DeliveryOptimizationLog -Path $doFiles -ErrorAction Stop | Select-Object -First 5000)
         }
         catch {
             $logProvider.Status = 'Failed'
