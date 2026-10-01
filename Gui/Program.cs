@@ -215,6 +215,11 @@ internal sealed class MainForm : Form
         try
         {
             var gutter = LogicalToDeviceUnits(24);
+            // Showing a tall log can introduce a vertical scrollbar. Reflow
+            // once more when that changes the available width; the resize
+            // event itself is guarded while this layout is in progress.
+            for (var pass = 0; pass < 3; pass++)
+            {
             var width = Math.Max(1, Math.Min(LogicalToDeviceUnits(920), _viewport.ClientSize.Width - gutter * 2));
             _content.MinimumSize = _content.MaximumSize = new Size(width, 0);
             _content.Width = width;
@@ -232,6 +237,8 @@ internal sealed class MainForm : Form
             // AutoScroll can remove/add its vertical bar during layout. Center
             // against the final client width, not the pre-layout viewport.
             _content.Location = new Point(Math.Max(gutter, (_viewport.ClientSize.Width - _content.Width) / 2), gutter + _viewport.AutoScrollPosition.Y);
+            if (width == Math.Max(1, Math.Min(LogicalToDeviceUnits(920), _viewport.ClientSize.Width - gutter * 2))) break;
+            }
         }
         finally { _layingOut = false; }
     }
