@@ -119,8 +119,9 @@ Assert-Decoder ($reportCtx.ExitCode -eq 30) 'Known decoder evidence gap still ma
 Write-Output "PASS: decoder/status report fixture: $reportPath"
 
 if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
-    # Query the actual OS module's private input enumeration without decoding
-    # synthetic data, flushing logs, or stopping any Windows service.
+    # Exercise the actual OS module's existence/filename gates. Provider parsing
+    # is explicitly stubbed because these inputs are synthetic, NOT native ETLs.
+    # This is not an ETL content/decoding test and makes no service/network calls.
     Import-Module WindowsUpdate -Force
     $nativeInput = Join-Path $fixture 'WindowsUpdate.00001.etl'
     Write-WudText $nativeInput 'Native filename-enumeration fixture only.'
@@ -139,12 +140,22 @@ if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
         if ($definitions.Count -ne 1) { throw ('Native decoder helper lookup failed in ' + $moduleSource + '; functions: ' + (($functions | ForEach-Object Name) -join ', ')) }
         $enumerate = $definitions[0].Body.GetScriptBlock()
         $parameterNames = @($definitions[0].Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+        function CheckSingleWUProvider { return $true }
         $parameters = @{ Paths = @($path) }
         if ($parameterNames -contains 'ETLFileNameFilter') { $parameters.ETLFileNameFilter = @('WindowsUpdate.*\.etl$') }
         if ($parameterNames -contains 'ProviderFilter') { $parameters.ProviderFilter = @('WUTraceLogging') }
-        & $enumerate @parameters
+        $files = @(& $enumerate @parameters)
+        $genericRejected = $null
+        if ($parameterNames -contains 'ETLFileNameFilter') {
+            $genericPath = Join-Path (Split-Path -Parent $path) '00001.etl'
+            [IO.File]::WriteAllText($genericPath, 'Filename-gate fixture only, not a native ETL.')
+            $parameters.Paths = @($genericPath); $genericRejected = $false
+            try { $null = & $enumerate @parameters } catch { $genericRejected = $_.Exception.Message -match 'ETL File not found' }
+        }
+        [pscustomobject]@{ Files = $files; HasFilenameFilter = $parameterNames -contains 'ETLFileNameFilter'; GenericRejected = $genericRejected }
     } $nativeInput
-    Assert-Decoder (@($nativeInputs).Count -eq 1 -and [string]$nativeInputs[0] -eq $nativeInput) 'Actual Windows module accepts the new staged ETL filename'
+    Assert-Decoder ($nativeInputs.Files.Count -eq 1 -and [string]$nativeInputs.Files[0] -eq $nativeInput) 'Actual Windows module existence/filename gates accept the new name (provider check explicitly stubbed)'
+    if ($nativeInputs.HasFilenameFilter) { Assert-Decoder $nativeInputs.GenericRejected 'Actual Windows filename filter rejects the old generic staging name with its misleading file-not-found error' }
 } else {
     Write-Host 'SKIP: Native module enumeration requires Windows PowerShell 5.1; it is a separate Windows CI check.'
 }
