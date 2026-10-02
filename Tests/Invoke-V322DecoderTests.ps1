@@ -130,8 +130,13 @@ if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
         # not at module scope. Execute its actual OS-supplied AST body rather
         # than assuming an undocumented private command is directly exported.
         $publicCommand = Get-Command Get-WindowsUpdateLog
-        $definitions = @($publicCommand.ScriptBlock.Ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'GetListOfETLs' }, $true))
-        if ($definitions.Count -ne 1) { throw 'The native decoder input-enumeration helper could not be uniquely located.' }
+        $moduleSource = $publicCommand.ScriptBlock.File
+        $nativeTokens = $null; $nativeErrors = $null
+        $moduleAst = [Management.Automation.Language.Parser]::ParseFile($moduleSource, [ref]$nativeTokens, [ref]$nativeErrors)
+        if ($nativeErrors.Count) { throw 'The installed native module source could not be parsed.' }
+        $functions = @($moduleAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $definitions = @($functions | Where-Object Name -eq 'GetListOfETLs')
+        if ($definitions.Count -ne 1) { throw ('Native decoder helper lookup failed in ' + $moduleSource + '; functions: ' + (($functions | ForEach-Object Name) -join ', ')) }
         $enumerate = $definitions[0].Body.GetScriptBlock()
         $parameterNames = @($definitions[0].Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         $parameters = @{ Paths = @($path) }
