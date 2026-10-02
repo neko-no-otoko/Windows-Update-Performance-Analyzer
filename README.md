@@ -7,8 +7,8 @@ Windows Update Performance Analyzer is a focused, read-only Windows 11 25H2 upda
 ## Use it
 
 1. Download the one-file executable for the computer:
-   - `WUPA-3.2.2-win-x64.exe` for most Windows PCs.
-   - `WUPA-3.2.2-win-arm64.exe` for Windows on ARM.
+   - `WUPA-3.2.3-win-x64.exe` for most Windows PCs.
+   - `WUPA-3.2.3-win-arm64.exe` for Windows on ARM.
 2. Run the executable and approve UAC.
 3. Select **Start tracking** before the update is offered or installed.
 4. Wait for **Ready for the 25H2 update**. You can then close WUPA.
@@ -70,9 +70,9 @@ Native trace capture recursively attempts every retained `.etl` (including `.etl
 
 Microsoft documents the [NetworkService DO trace path](https://learn.microsoft.com/en-us/windows/deployment/do/delivery-optimization-test) and [Panther setup performance ETL](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-log-files-and-event-logs?view=windows-11).
 
-For full live capture, start tracking before the upgrade. Opening a newer executable does not by itself replace already-running scheduled-task code. WUPA 3.2.2 offers **Apply engine 3.2.2 to this active run** for compatible 3.0.0 through 3.2.1 cases; it retains their original baseline and samples, journals a brief sampling pause, and updates only the owned task actions. Do not cancel/re-arm an ongoing case just to obtain the report fix. Earlier data cannot acquire observations that the older recorder never captured.
+For full live capture, start tracking before the upgrade. Opening a newer executable does not by itself replace already-running scheduled-task code. WUPA 3.2.3 offers **Apply engine 3.2.3 to this active run** for compatible 3.0.0 through 3.2.2 cases; it retains their original baseline and samples, journals a brief sampling pause, and updates only the owned task actions. Do not cancel/re-arm an ongoing case just to obtain the report fix. Earlier data cannot acquire observations that the older recorder never captured.
 
-The 3.2.2 engine corrects staged ETL filenames and rejects decoder placeholder files. A later matching installation result closes an older start for outcome reporting, but never supplies a missing installation/reboot timing boundary. Missing ends display as **Not retained**, with duration **Not calculable**; they do not independently mean the upgrade is still running. Existing 3.2.1 applications can receive this engine-only fix through the signed updater.
+The 3.2.3 engine decodes each captured ETL set through its own staged folder, avoiding the affected Windows module's explicit-file regex bug; prefixed filenames alone did not fix it in 3.2.2. Decoder placeholder files remain rejected. A later matching installation result closes an older start for outcome reporting, but never supplies a missing installation/reboot timing boundary. Missing ends display as **Not retained**, with duration **Not calculable**; they do not independently mean the upgrade is still running. Existing 3.2.1/3.2.2 applications can receive this engine-only fix through the signed updater.
 
 ## Verified updates
 

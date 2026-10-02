@@ -604,9 +604,8 @@ function Invoke-WudWindowsUpdateLogDecode {
         try {
             $inputs = New-Object Collections.ArrayList; $mappings = New-Object Collections.ArrayList; $index = 0
             foreach ($file in $plan.Files) {
-                # Modern Get-WindowsUpdateLog checks WindowsUpdate filename
-                # filters even for explicitly supplied files. Generic 00001.etl
-                # is rejected with the misleading "ETL File not found" message.
+                # The directory-input branch uses the WindowsUpdate*.etl wildcard.
+                # Keep matching, unique names for rotated evidence copies.
                 $index++; $inputPath = Join-Path $scratch ('WindowsUpdate.{0:D5}.etl' -f $index)
                 Copy-Item -LiteralPath $file.FullName -Destination $inputPath -ErrorAction Stop
                 $copy = Get-Item -LiteralPath $inputPath -ErrorAction Stop
@@ -617,8 +616,12 @@ function Invoke-WudWindowsUpdateLogDecode {
             $record.InputMappings = @($mappings)
             $inputsPath = Join-Path $scratch 'inputs.json'
             Write-WudJsonAtomic $inputsPath @($inputs)
-            $escapedInputs = $inputsPath.Replace("'", "''"); $escaped = $plan.LogPath.Replace("'", "''")
-            $script = "`$ErrorActionPreference = 'Stop'; try { [string[]]`$etlFiles = Get-Content -LiteralPath '$escapedInputs' -Raw -Encoding UTF8 | ConvertFrom-Json; foreach (`$etlFile in `$etlFiles) { if (-not (Test-Path -LiteralPath `$etlFile -PathType Leaf)) { throw ('Staged ETL missing before decoding: ' + `$etlFile) } }; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null } catch { [Console]::Error.WriteLine((`$_ | Format-List * -Force | Out-String)); exit 1 }"
+            $escapedInputs = $inputsPath.Replace("'", "''"); $escaped = $plan.LogPath.Replace("'", "''"); $escapedScratch = $scratch.Replace("'", "''")
+            # Some OS modules apply the default wildcard as a regex to explicit
+            # file paths, rejecting even WindowsUpdate-prefixed staged files.
+            # Folder input takes the supported wildcard-enumeration branch.
+            # Still verify every staged file inside the decoder's own process.
+            $script = "`$ErrorActionPreference = 'Stop'; try { [string[]]`$etlFiles = Get-Content -LiteralPath '$escapedInputs' -Raw -Encoding UTF8 | ConvertFrom-Json; foreach (`$etlFile in `$etlFiles) { if (-not (Test-Path -LiteralPath `$etlFile -PathType Leaf)) { throw ('Staged ETL missing before decoding: ' + `$etlFile) } }; Get-WindowsUpdateLog -ETLPath '$escapedScratch' -LogPath '$escaped' -ErrorAction Stop | Out-Null } catch { [Console]::Error.WriteLine((`$_ | Format-List * -Force | Out-String)); exit 1 }"
             $result = Invoke-WudProcess -Context $Context -FilePath $powerShell -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $script) -Name ('convert-windows-update-log-' + $plan.Name) -TimeoutSeconds ([int]$Context.Settings.timeoutsSeconds.windowsUpdateLog) -ExpectedArtifacts @($plan.LogPath)
             $record.ProcessStatus = $result.ExecutionStatus; $record.ExitCode = Get-WudObjectPropertyValue $result 'ExitCode'
             $record.Status = $result.ExecutionStatus

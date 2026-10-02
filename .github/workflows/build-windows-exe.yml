@@ -48,6 +48,7 @@ jobs:
             './Tests/Invoke-V320MigrationTests.ps1'
             './Tests/Invoke-V321RetainedTests.ps1'
             './Tests/Invoke-V322DecoderTests.ps1'
+            './Tests/Invoke-V323DirectoryTests.ps1'
           )
           foreach ($test in $tests) {
             & pwsh -NoProfile -File $test
@@ -64,11 +65,15 @@ jobs:
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 migration fixtures failed.' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1 -PreviousEngine 3.2.0
-          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.0-to-3.2.2 migration fixtures failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.0-to-current migration fixtures failed.' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1 -PreviousEngine 3.2.1
-          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.1-to-3.2.2 migration fixtures failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.1-to-current migration fixtures failed.' }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V320MigrationTests.ps1 -PreviousEngine 3.2.2
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 3.2.2-to-current migration fixtures failed.' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V322DecoderTests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PS5 decoder/placeholder/status fixtures failed.' }
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V323DirectoryTests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PS5 installed-module directory/default-filter fixtures failed.' }
           $retainedOutput = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./Tests/Invoke-V321RetainedTests.ps1)
           $retainedOutput | Write-Output
           if ($LASTEXITCODE -ne 0) { throw 'PS5 retained-log/timestamp fixtures failed.' }
@@ -124,7 +129,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WUPA-3.2.2
+          name: WUPA-3.2.3
           path: |
             dist/*.exe
             dist/*.json

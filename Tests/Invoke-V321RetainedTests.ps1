@@ -66,9 +66,10 @@ try {
         $script:DecodeCalls = New-Object Collections.ArrayList
         function script:Get-WindowsUpdateLog {
             param([string[]]$ETLPath, [string]$LogPath, $ErrorAction)
-            if (-not $ETLPath.Count) { throw 'Decoder received no paths.' }
-            foreach ($inputPath in $ETLPath) { if (-not (Test-Path -LiteralPath $inputPath) -or [IO.Path]::GetFileName($inputPath) -notlike 'WindowsUpdate*.etl') { throw 'A staged input must exist and satisfy the modern WindowsUpdate filename filter.' } }
-            $null = $script:DecodeCalls.Add([pscustomobject]@{ Count = $ETLPath.Count; LogPath = $LogPath })
+            if ($ETLPath.Count -ne 1 -or -not (Test-Path -LiteralPath $ETLPath[0] -PathType Container)) { throw 'Decoder must receive one owned staged folder, not explicit ETL files.' }
+            $files = @(Get-ChildItem -LiteralPath $ETLPath[0] -Recurse -File | Where-Object Name -like 'WindowsUpdate*.etl')
+            if (-not $files.Count) { throw 'Staged folder has no decoder-compatible inputs.' }
+            $null = $script:DecodeCalls.Add([pscustomobject]@{ Count = $files.Count; LogPath = $LogPath })
             # Do not overwrite the real retained-log fixture used below.
         }
         function script:Invoke-WudProcess {

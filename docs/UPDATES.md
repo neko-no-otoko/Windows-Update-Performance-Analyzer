@@ -4,13 +4,13 @@ WUPA 3.2 still ships as one architecture-specific portable EXE, with an embedded
 
 ## Operator workflow
 
-### 3.2.2 collector patch
+### 3.2.3 collector patch
 
-This patch changes collector/report behavior, not the updater shell. Its minimum GUI remains 3.2.1: a 3.2.1 GUI can download the signed engine ZIP and will display **WUPA 3.2.1 - engine 3.2.2**. A new EXE is also built for fresh deployments. The original/network-share EXE is not overwritten.
+This patch changes collector behavior, not the updater shell. Its minimum GUI remains 3.2.1: a 3.2.1/3.2.2 GUI can download the signed engine ZIP and will display its original application version with **engine 3.2.3**. A new EXE is also built for fresh deployments. The original/network-share EXE is not overwritten.
 
-After applying the engine, an already-upgraded device can use **Create report from existing logs** to capture and decode retained evidence again. For an older active tracking run, explicitly approve **Apply engine 3.2.2 to this active run** and wait for restart verification; do not finalize a still-running Windows upgrade merely to update WUPA. Existing raw captures are retained.
+After applying the engine, an already-upgraded device can use **Create report from existing logs** to capture and decode retained evidence again. For an older active tracking run, explicitly approve **Apply engine 3.2.3 to this active run** and wait for restart verification; do not finalize a still-running Windows upgrade merely to update WUPA. Existing raw captures are retained.
 
-The patch repairs decoder filename filtering, rejects write-access-only output, preserves known decoder exit failures, recognizes the operational download-completion event, and reconciles later history results with historical starts. Installation/reboot elapsed values remain unavailable when no matching exact boundary was retained. Windows CI runs PowerShell 5.1 fixtures, native module input enumeration, GUI rendering and portable startup checks before publication; these are not a full feature upgrade or a real-device ETL decode. See the release notes for validation scope.
+The 3.2.2 filename-only fix was insufficient: the affected native module applies WindowsUpdate*.etl as a regex to explicit file inputs. 3.2.3 passes an owned staged directory, exercising its correct wildcard branch. Both current and Windows.old sets retain their mappings, per-file existence checks, output validation and honest failure reporting. Installation/reboot elapsed values remain unavailable when no matching exact boundary was retained. Windows CI runs PowerShell 5.1 fixtures, real installed-module helpers with the default wildcard, GUI rendering and portable startup checks before publication; it also attempts public-cmdlet decoding when the CI host retains native ETLs. None of these checks is a full feature upgrade or affected-device replay. See the release notes for actual validation scope.
 
 ### Testing the 3.2.0 to 3.2.1 update
 
@@ -43,7 +43,7 @@ Allowed HTTPS download/redirect hosts are api.github.com, github.com, release-as
 
 1. Bump VERSION, application/engine versions and Data/update-compatibility.json; keep tool, schema, UI and state compatibility explicit.
 2. Run the PowerShell, native layout and updater tests; regenerate BundleManifest.sha256. Windows CI builds both executables and an unsigned engine ZIP/update JSON artifact. **CI does not hold the private signing key.**
-3. Download the validated executables/build record into a fresh release folder. Run `Build/Create-UpdateRelease.ps1 -OutputPath <folder> -SigningKeyPath <offline-private-key.pem> -MinimumAppVersion <minimum-shell-version>`. The script verifies the key against the public key embedded in WUPA. Use a minimum equal to the new GUI version when shell behavior changed; engine-only hotfixes may keep minimum 3.2.0 while their engine/release versions advance.
+3. Download the validated executables, build record, engine ZIP and update JSON from the exact successful CI commit into a fresh release folder. Sign the exact downloaded WUPA-update.json bytes offline using RSA-PSS/SHA-256, then verify with the embedded public key. Do not rebuild or replace an already-validated ZIP while signing. For a new local build, `Build/Create-UpdateRelease.ps1 -OutputPath <fresh-folder> -SigningKeyPath <offline-private-key.pem> -MinimumAppVersion <minimum-shell-version>` creates and signs artifacts. Use a minimum equal to the new GUI version when shell behavior changed; current engine-only hotfixes keep minimum 3.2.1 while engine/release versions advance.
 4. Independently verify the actual signature, ZIP contents, inner manifest and both EXE hashes using the UpdateCore.Tests `--verify-release <folder> <public-key.pem>` mode.
 5. Publish one stable version tag with the two EXEs, WUPA-build.json, Checksums.sha256, WUPA-engine-<version>.zip, WUPA-update.json and the binary WUPA-update.sig. Never replace assets under an existing version. No source/temp fixtures, private keys, device logs or inventories belong in the public release.
 

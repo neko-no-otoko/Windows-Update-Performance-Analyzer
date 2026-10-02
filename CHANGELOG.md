@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.3 - 2026-10-02
+
+- Fix the remaining ETL File not found conversion failure: pass each owned staged directory to Get-WindowsUpdateLog instead of explicit file paths. The affected OS module treats its default WindowsUpdate*.etl wildcard as a regex for file inputs, rejecting even prefixed filenames. Its folder-input branch uses wildcard matching correctly.
+- Retain per-file child-process checks, source mappings, separate Current/Windows.old streams, bounded decoding, diagnostic-output validation and honest failure reporting. No source logs or Microsoft module files are modified; ForceFlush is never requested.
+- Correct the native regression check to use the real default wildcard and both actual installed-OS enumeration/helper functions, without a permissive regex or helper stub. Enforce directory inputs in child-process fixtures, including paths with spaces/apostrophes. Add a public-cmdlet decode check when CI retains native Windows Update ETLs.
+- Keep minimum GUI 3.2.1 for small authenticated engine updates; validate active-run migration from 3.2.2 while preserving captured evidence. Missing exact installation/reboot boundaries remain unknown, not estimated from history success.
+
 ## 3.2.2 - 2026-10-02
 
 - Keep decoder-compatible WindowsUpdate-prefixed names for staged and rotated ETLs; check all input files inside the child process and retain original-to-staged mappings. Raw evidence remains unchanged.

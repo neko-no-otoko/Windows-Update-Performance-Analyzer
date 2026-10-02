@@ -17,7 +17,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$toolVersion = '3.2.2'
+$toolVersion = '3.2.3'
 $toolRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TargetVersion = '25H2'
 $OutputPath = $null

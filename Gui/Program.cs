@@ -31,7 +31,7 @@ internal static class Program
 
 internal sealed partial class MainForm : Form
 {
-    internal const string AppVersion = "3.2.2";
+    internal const string AppVersion = "3.2.3";
     private const int TargetBuild = 26200;
     private readonly Label _status = new();
     private readonly Label _statusDetail = new();

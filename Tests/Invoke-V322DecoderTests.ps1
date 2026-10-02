@@ -5,7 +5,7 @@ Set-StrictMode -Version 2.0
 $toolRoot = Split-Path -Parent $PSScriptRoot
 foreach ($name in @('Common', 'UpdateTracking', 'Recorder', 'Collectors', 'Analysis', 'Review', 'Report')) { Import-Module (Join-Path $toolRoot ("Modules/{0}.psm1" -f $name)) -Force -DisableNameChecking }
 function Assert-Decoder { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw $Message }; Write-Host "PASS: $Message" }
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('WUPA-Decoder322-' + [Guid]::NewGuid().ToString('N'))
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('WUPA-Decoder322 quoted''s space-' + [Guid]::NewGuid().ToString('N'))
 $ctx = New-WudRunContext -ToolRoot $toolRoot -ToolVersion '3.2.2-test' -RunId 'decoder' -RunPath (Join-Path $fixture 'run') -OutputPath (Join-Path $fixture 'out') -Mode 'Forensic' -PhaseLabel 'Forensic' -TargetVersion '25H2' -CopyTo $null -MediaPath $null -AcceptWindowsEula $false -IncludeLargeDumps $false -NoInternet $true -NoSetupHooks $true -ArmDays 30
 $id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 $ctx.Inventory['Identity'] = [pscustomobject]@{ DisplayVersion = '25H2'; CurrentBuild = '26200'; TimeZone = 'UTC'; WindowsImageState = 'IMAGE_STATE_COMPLETE' }
@@ -53,16 +53,16 @@ Assert-Decoder ((Test-WudDecodedWindowsUpdateLog $probe).Status -eq 'NoDecodedRe
 Assert-Decoder ((Test-WudDecodedWindowsUpdateLog (Join-Path $fixture 'absent.log')).Status -eq 'MissingOutput') 'Missing decoded output is explicit'
 
 # Exercise the real child-process/quoting/precheck/result path. Only the decoder
-# itself is substituted with a small module emulating its filename validation.
+# itself is substituted with a small module enforcing folder-input enumeration.
 $fakeModule = Join-Path $fixture 'DecoderFixture.psm1'
 Write-WudText $fakeModule @'
 function Get-WindowsUpdateLog {
     [CmdletBinding()]
     param([string[]]$ETLPath, [string]$LogPath)
     [IO.File]::WriteAllText($LogPath, "Checking write access`r`n")
-    foreach ($path in $ETLPath) {
-        if (-not (Test-Path -LiteralPath $path) -or [IO.Path]::GetFileName($path) -notlike 'WindowsUpdate*.etl') { throw "ETL File not found: $path" }
-    }
+    if ($ETLPath.Count -ne 1 -or -not (Test-Path -LiteralPath $ETLPath[0] -PathType Container)) { throw 'Expected one staged directory, not explicit ETL files.' }
+    $files = @(Get-ChildItem -LiteralPath $ETLPath[0] -Recurse -File | Where-Object Name -like 'WindowsUpdate*.etl')
+    if (-not $files.Count) { throw 'No ETL files enumerated from staged directory.' }
     if ($env:WUPA_DECODER_FIXTURE_MODE -eq 'Fail') { throw 'Injected decoder failure after output probe.' }
     if ($env:WUPA_DECODER_FIXTURE_MODE -ne 'ProbeOnly') {
         [IO.File]::WriteAllText($LogPath, "2026/10/05 10:00:00.1234567 1 2 Agent Diagnostic fixture record`r`n")
@@ -79,13 +79,22 @@ try {
         $script:DecoderFixtureModule = $modulePath; $script:DecoderFixtureExecutable = $executable
         function script:Invoke-WudProcess {
             param($Context, $FilePath, $ArgumentList, $Name, $TimeoutSeconds, $ExpectedArtifacts)
+            if ($env:WUPA_DECODER_FIXTURE_MODE -eq 'MissingInput') {
+                # Simulate a staged file disappearing AFTER the parent verified
+                # its copy. The real child must fail before invoking the decoder.
+                $owned = @(Get-ChildItem -LiteralPath (Join-Path $Context.RunPath 'DecodeScratch') -Directory)
+                if ($owned.Count -ne 1) { throw 'Fixture expected exactly one owned scratch directory.' }
+                $input = Get-ChildItem -LiteralPath $owned[0].FullName -File -Filter '*.etl' | Select-Object -First 1
+                Remove-Item -LiteralPath $input.FullName -Force
+            }
             $argsCopy = @($ArgumentList)
             $argsCopy[-1] = "Import-Module '" + $script:DecoderFixtureModule.Replace("'", "''") + "' -Force; " + $argsCopy[-1]
             Common\Invoke-WudProcess -Context $Context -FilePath $script:DecoderFixtureExecutable -ArgumentList $argsCopy -Name $Name -TimeoutSeconds $TimeoutSeconds -ExpectedArtifacts $ExpectedArtifacts
         }
     } $fakeModule (Get-Process -Id $PID).Path
     foreach ($name in @('Raw/WindowsUpdate-ETL/WindowsUpdate.1.etl', 'Raw/WindowsUpdate-ETL/WindowsUpdate.2.etl.old', 'Raw/WindowsOld-WindowsUpdate-ETL/WindowsUpdate.1.etl.bak')) { Write-WudText (Join-Path $ctx.SnapshotPath $name) 'Synthetic input, not a native ETL.' }
-    foreach ($mode in @('Valid', 'Fail', 'Partial', 'ProbeOnly')) {
+    $rawBefore = @(Get-ChildItem -LiteralPath (Join-Path $ctx.SnapshotPath 'Raw') -Recurse -File | Sort-Object FullName | ForEach-Object { $_.Name + ':' + (Get-WudFileHashSafe $_.FullName) }) -join ','
+    foreach ($mode in @('Valid', 'Fail', 'Partial', 'ProbeOnly', 'MissingInput')) {
         $env:WUPA_DECODER_FIXTURE_MODE = $mode
         & (Get-Module Collectors) { param($c) Invoke-WudWindowsUpdateLogDecode $c } $ctx
         $conversions = Read-WudJson (Join-Path $ctx.SnapshotPath 'WindowsUpdate/conversion-inputs.json')
@@ -94,12 +103,15 @@ try {
             if ($mode -eq 'Valid') { Assert-Decoder ($conversion.Status -eq 'Succeeded' -and $conversion.ExitCode -eq 0 -and $conversion.OutputValidation.Valid) 'Child decoder verifies staged files and returns real diagnostic output' }
             elseif ($mode -eq 'Fail') { Assert-Decoder ($conversion.Status -eq 'ExitedNonzero' -and $conversion.ExitCode -eq 1 -and $conversion.Error -match 'Injected decoder failure' -and $conversion.OutputValidation.Status -eq 'WriteAccessProbeOnly') 'Known failed decoder retains exit code, stderr, and rejected output content' }
             elseif ($mode -eq 'Partial') { Assert-Decoder ($conversion.Status -eq 'ExitedNonzero' -and $conversion.ExitCode -eq 1 -and $conversion.OutputValidation.Valid) 'Usable partial output never upgrades a known failed decoder into a successful conversion' }
+            elseif ($mode -eq 'MissingInput') { Assert-Decoder ($conversion.Status -eq 'ExitedNonzero' -and $conversion.ExitCode -eq 1 -and $conversion.Error -match 'Staged ETL missing before decoding') 'Child-process existence check rejects a disappeared copy before directory decoding' }
             else { Assert-Decoder ($conversion.Status -eq 'InvalidDecodedOutput' -and $conversion.ExitCode -eq 0) 'Even exit zero cannot validate a permission-probe-only output' }
         }
         $parsedConversion = Read-WudWindowsUpdateLogRecords $ctx
         if ($mode -eq 'Partial') { Assert-Decoder (@($parsedConversion.Coverage | Where-Object { $_.Status -eq 'ParsedPartialDecode' -and $_.DecodeExitCode -eq 1 }).Count -eq 2) 'Parser labels usable partial current/Windows.old conversion with its actual failed exit code' }
         if ($mode -eq 'Valid') { Assert-Decoder (@($parsedConversion.Coverage | Where-Object Status -eq 'Parsed').Count -eq 2) 'Complete valid current/Windows.old conversions remain cleanly parsed' }
     }
+    $rawAfter = @(Get-ChildItem -LiteralPath (Join-Path $ctx.SnapshotPath 'Raw') -Recurse -File | Sort-Object FullName | ForEach-Object { $_.Name + ':' + (Get-WudFileHashSafe $_.FullName) }) -join ','
+    Assert-Decoder ($rawAfter -eq $rawBefore) 'All raw input names and hashes remain unchanged across success and injected failures'
 } finally { $env:SystemRoot = $oldSystemRoot; $env:WUPA_DECODER_FIXTURE_MODE = $oldMode }
 Assert-Decoder (@(Get-ChildItem (Join-Path $ctx.RunPath 'DecodeScratch') -Directory).Count -eq 0) 'Only owned scratch folders are cleaned after completed decoding; original ETLs remain'
 
@@ -118,47 +130,8 @@ Assert-Decoder ($reportHtml.Contains('Not retained') -and $reportHtml.Contains('
 Assert-Decoder ($reportCtx.ExitCode -eq 30) 'Known decoder evidence gap still marks the completed report materially incomplete'
 Write-Output "PASS: decoder/status report fixture: $reportPath"
 
-if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
-    # Exercise the actual OS module's existence/filename gates. Provider parsing
-    # is explicitly stubbed because these inputs are synthetic, NOT native ETLs.
-    # This is not an ETL content/decoding test and makes no service/network calls.
-    Import-Module WindowsUpdate -Force
-    $nativeInput = Join-Path $fixture 'WindowsUpdate.00001.etl'
-    Write-WudText $nativeInput 'Native filename-enumeration fixture only.'
-    $nativeInputs = & (Get-Module WindowsUpdate) {
-        param($path)
-        # Some Windows builds define this helper inside Get-WindowsUpdateLog,
-        # not at module scope. Execute its actual OS-supplied AST body rather
-        # than assuming an undocumented private command is directly exported.
-        $publicCommand = Get-Command Get-WindowsUpdateLog
-        $moduleSource = $publicCommand.ScriptBlock.File
-        $nativeTokens = $null; $nativeErrors = $null
-        $moduleAst = [Management.Automation.Language.Parser]::ParseFile($moduleSource, [ref]$nativeTokens, [ref]$nativeErrors)
-        if ($nativeErrors.Count) { throw 'The installed native module source could not be parsed.' }
-        $functions = @($moduleAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true))
-        $definitions = @($functions | Where-Object Name -eq 'GetListOfETLs')
-        if ($definitions.Count -ne 1) { throw ('Native decoder helper lookup failed in ' + $moduleSource + '; functions: ' + (($functions | ForEach-Object Name) -join ', ')) }
-        $enumerate = $definitions[0].Body.GetScriptBlock()
-        $parameterNames = @($definitions[0].Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        function CheckSingleWUProvider { return $true }
-        $parameters = @{ Paths = @($path) }
-        if ($parameterNames -contains 'ETLFileNameFilter') { $parameters.ETLFileNameFilter = @('WindowsUpdate.*\.etl$') }
-        if ($parameterNames -contains 'ProviderFilter') { $parameters.ProviderFilter = @('WUTraceLogging') }
-        $files = @(& $enumerate @parameters)
-        $genericRejected = $null
-        if ($parameterNames -contains 'ETLFileNameFilter') {
-            $genericPath = Join-Path (Split-Path -Parent $path) '00001.etl'
-            [IO.File]::WriteAllText($genericPath, 'Filename-gate fixture only, not a native ETL.')
-            $parameters.Paths = @($genericPath); $genericRejected = $false
-            try { $null = & $enumerate @parameters } catch { $genericRejected = $_.Exception.Message -match 'ETL File not found' }
-        }
-        [pscustomobject]@{ Files = $files; HasFilenameFilter = $parameterNames -contains 'ETLFileNameFilter'; GenericRejected = $genericRejected }
-    } $nativeInput
-    Assert-Decoder ($nativeInputs.Files.Count -eq 1 -and [string]$nativeInputs.Files[0] -eq $nativeInput) 'Actual Windows module existence/filename gates accept the new name (provider check explicitly stubbed)'
-    if ($nativeInputs.HasFilenameFilter) { Assert-Decoder $nativeInputs.GenericRejected 'Actual Windows filename filter rejects the old generic staging name with its misleading file-not-found error' }
-} else {
-    Write-Host 'SKIP: Native module enumeration requires Windows PowerShell 5.1; it is a separate Windows CI check.'
-}
+# The native/default-filter test lives in Invoke-V323DirectoryTests.ps1.
+# Do not replace the OS default wildcard with a permissive test-only regex.
 
 if ($DatasetZip) {
     # Optional local-only replay. Neither this ZIP nor its private XML is ever
