@@ -126,10 +126,18 @@ if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
     Write-WudText $nativeInput 'Native filename-enumeration fixture only.'
     $nativeInputs = & (Get-Module WindowsUpdate) {
         param($path)
-        $command = Get-Command GetListOfETLs
+        # Some Windows builds define this helper inside Get-WindowsUpdateLog,
+        # not at module scope. Execute its actual OS-supplied AST body rather
+        # than assuming an undocumented private command is directly exported.
+        $publicCommand = Get-Command Get-WindowsUpdateLog
+        $definitions = @($publicCommand.ScriptBlock.Ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'GetListOfETLs' }, $true))
+        if ($definitions.Count -ne 1) { throw 'The native decoder input-enumeration helper could not be uniquely located.' }
+        $enumerate = $definitions[0].Body.GetScriptBlock()
+        $parameterNames = @($definitions[0].Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         $parameters = @{ Paths = @($path) }
-        if ($command.Parameters.ContainsKey('ETLFileNameFilter')) { $parameters.ETLFileNameFilter = @('WindowsUpdate*.etl'); $parameters.ProviderFilter = @('WUTraceLogging') }
-        GetListOfETLs @parameters
+        if ($parameterNames -contains 'ETLFileNameFilter') { $parameters.ETLFileNameFilter = @('WindowsUpdate*.etl') }
+        if ($parameterNames -contains 'ProviderFilter') { $parameters.ProviderFilter = @('WUTraceLogging') }
+        & $enumerate @parameters
     } $nativeInput
     Assert-Decoder (@($nativeInputs).Count -eq 1 -and [string]$nativeInputs[0] -eq $nativeInput) 'Actual Windows module accepts the new staged ETL filename'
 } else {
