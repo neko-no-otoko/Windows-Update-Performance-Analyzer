@@ -185,8 +185,8 @@ try {
         $artifactArguments = @($shellScript)
     }
     $uncertain = Invoke-WudProcess -Context $processContext -FilePath $artifactFile -ArgumentList $artifactArguments -Name 'fixture-artifact-uncertain' -TimeoutSeconds 30 -ExpectedArtifacts @($artifact)
-    Assert-WudV200 ($uncertain.ExecutionStatus -eq 'ArtifactCapturedDespiteProcessUncertainty') 'Usable artifacts are distinguished from confirmed process success'
-    Assert-WudV200 ($uncertain.ExitCode -eq 1 -and -not [string]::IsNullOrWhiteSpace($uncertain.Detail)) 'Uncertain artifact result retains nonzero exit evidence'
+    Assert-WudV200 ($uncertain.ExecutionStatus -eq 'ExitedNonzero' -and $uncertain.ExpectedArtifacts[0].Present) 'Changed output is retained without erasing a known process failure'
+    Assert-WudV200 ($uncertain.ExitCode -eq 1 -and $uncertain.Detail -match 'code 1') 'Known failed process retains its actual nonzero exit diagnosis'
 
     $collectorSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Modules/Collectors.psm1') -Raw
     $doStart = $collectorSource.IndexOf('function Invoke-WudWindowsUpdateLogCollector')

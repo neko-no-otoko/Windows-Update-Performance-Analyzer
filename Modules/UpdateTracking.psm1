@@ -64,7 +64,9 @@ function ConvertFrom-WudUpdateEventXml {
     }
     # Provider keyword masks supply locale-neutral semantics for download
     # completion; do not assume that a generic event number is a completion.
-    if (($keywords -band [UInt64]0x4004) -eq [UInt64]0x4004) { $boundary = 'DownloadCompleted' }
+    # WU keyword bits are Download=0x4, Success=0x10 and Started=0x2000.
+    # Operational event 41 uses 0x...0014, not the old synthetic 0x...4004.
+    if (($keywords -band [UInt64]0x14) -eq [UInt64]0x14) { $boundary = 'DownloadCompleted' }
     elseif (($keywords -band [UInt64]0x2004) -eq [UInt64]0x2004) { $boundary = 'DownloadStarted' }
     $timestamp = $system.SelectSingleNode("*[local-name()='TimeCreated']").GetAttribute('SystemTime')
     $channel = $system.SelectSingleNode("*[local-name()='Channel']").InnerText
@@ -254,7 +256,17 @@ function Read-WudWindowsUpdateLogRecords {
     $zone = [string](Get-WudObjectPropertyValue $Context.Inventory['Identity'] 'TimeZone')
     foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidencePath -Recurse -File -Filter 'WindowsUpdate*.log' -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'WindowsUpdate' })) {
         $relative = (Get-WudRelativePath $Context.EvidencePath $file.FullName).Replace('\', '/')
-        $reader = $null; $lineNumber = 0; $bytes = 0L; $count = 0; $unknownTimes = 0; $status = 'Parsed'; $errorText = $null
+        $conversionInfo = Read-WudJson (Join-Path $file.Directory.FullName 'conversion-inputs.json')
+        $conversion = @(Get-WudObjectPropertyValue $conversionInfo 'Sets' @() | Where-Object { (Split-Path -Leaf ([string]$_.Output)) -eq $file.Name } | Select-Object -First 1)
+        $decodeStatus = if ($conversion.Count) { [string]$conversion[0].Status } else { 'NotRecorded' }
+        $decodeExit = if ($conversion.Count) { Get-WudObjectPropertyValue $conversion[0] 'ExitCode' } else { $null }
+        $validation = Test-WudDecodedWindowsUpdateLog -Path $file.FullName
+        if (-not $validation.Valid) {
+            $null = $coverage.Add([pscustomobject]@{ SourceRef = $relative; Status = $validation.Status; DecodeExecutionStatus = $decodeStatus; DecodeExitCode = $decodeExit; ParsedLines = 0; ExactIdentityRecords = 0; UnresolvedTimestamps = 0; TimeZoneId = $zone; Error = $validation.Detail })
+            $null = Add-WudCollectionGap -Context $Context -Collector 'update-log-parser' -Source $relative -Status $validation.Status -Detail $validation.Detail -Impact 'Material'
+            continue
+        }
+        $reader = $null; $lineNumber = 0; $bytes = 0L; $count = 0; $unknownTimes = 0; $status = if ($decodeStatus -in @('Succeeded', 'NotRecorded')) { 'Parsed' } else { 'ParsedPartialDecode' }; $errorText = if ($status -eq 'ParsedPartialDecode') { 'Diagnostic records were retained, but conversion did not complete successfully; missing boundaries cannot be treated as absent from the native traces.' } else { $null }
         try {
             $reader = New-Object IO.StreamReader($file.FullName, [Text.Encoding]::UTF8, $true)
             while (-not $reader.EndOfStream) {
@@ -267,7 +279,7 @@ function Read-WudWindowsUpdateLogRecords {
             }
         } catch { $status = 'Failed'; $errorText = $_.Exception.Message }
         finally { if ($reader) { $reader.Dispose() } }
-        $null = $coverage.Add([pscustomobject]@{ SourceRef = $relative; Status = $status; ParsedLines = $lineNumber; ExactIdentityRecords = $count; UnresolvedTimestamps = $unknownTimes; TimeZoneId = $zone; Error = $errorText })
+        $null = $coverage.Add([pscustomobject]@{ SourceRef = $relative; Status = $status; DecodeExecutionStatus = $decodeStatus; DecodeExitCode = $decodeExit; ParsedLines = $lineNumber; ExactIdentityRecords = $count; UnresolvedTimestamps = $unknownTimes; TimeZoneId = $zone; Error = $errorText })
         if ($status -ne 'Parsed' -or $unknownTimes) { $null = Add-WudCollectionGap -Context $Context -Collector 'update-log-parser' -Source $relative -Status $(if ($unknownTimes -and $status -eq 'Parsed') { 'UnresolvedTimestamps' } else { $status }) -Detail ('Decoded log parse/timestamp coverage is incomplete. ' + $errorText) -Impact 'Material' }
     }
     $result = [pscustomobject]@{ GrammarVersion = $catalog.GrammarVersion; Records = @($records); UnresolvedRecords = @($unresolved); Coverage = @($coverage); TimeNormalization = 'Captured device time zone is assumed to apply to source-local timestamps; historical time-zone changes cannot be inferred. Raw timestamp text is preserved in each excerpt.' }
@@ -275,4 +287,30 @@ function Read-WudWindowsUpdateLogRecords {
     return $result
 }
 
-Export-ModuleMember -Function @('Test-WudTargetUpgradeTitle', 'ConvertTo-WudUpdateGuid', 'ConvertFrom-WudUpdateEventXml', 'Get-WudUpdateEventRecords', 'Get-WudArchivedUpdateEventRecords', 'Resolve-WudUpgradeIdentity', 'Test-WudUpgradeIdentityMatch', 'Update-WudUpgradeTracking', 'Get-WudWindowsUpdateConversionPlan', 'ConvertFrom-WudWindowsUpdateLogLine', 'Read-WudWindowsUpdateLogRecords')
+function Test-WudDecodedWindowsUpdateLog {
+    param([Parameter(Mandatory = $true)][string]$Path, [long]$MaximumValidationBytes = 2097152)
+    $valid = $false; $status = 'MissingOutput'; $detail = 'No decoded output file was produced.'
+    $reader = $null; $lines = 0; $bytes = 0L; $probeOnly = $true; $sawProbe = $false
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            $reader = New-Object IO.StreamReader($Path, [Text.Encoding]::UTF8, $true)
+            $status = 'NoDecodedRecords'; $detail = 'Output contains no recognizable timestamped Windows Update diagnostic records.'
+            while (-not $reader.EndOfStream) {
+                $line = $reader.ReadLine(); $lines++; $bytes += [Text.Encoding]::UTF8.GetByteCount($line)
+                if ($bytes -gt $MaximumValidationBytes) { $status = 'ValidationLimitReached'; $detail = 'No diagnostic record was recognized within the bounded output-validation window.'; break }
+                if ($line.Trim() -and $line.Trim() -ne 'Checking write access') { $probeOnly = $false }
+                if ($line.Trim() -eq 'Checking write access') { $sawProbe = $true }
+                # Content validation is not target attribution. Valid logs can
+                # contain only unrelated updates and must not be rejected for it.
+                if ($line -match '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?\s+\d+\s+\d+\s+\S+\s+\S') {
+                    $valid = $true; $status = 'DecodedRecordsPresent'; $detail = 'Timestamped Windows Update diagnostic output was recognized.'; break
+                }
+            }
+            if (-not $valid -and $probeOnly -and $sawProbe -and $status -ne 'ValidationLimitReached') { $status = 'WriteAccessProbeOnly'; $detail = 'Output contains only the decoder write-access probe, not converted ETL records.' }
+        }
+    } catch { $status = 'OutputReadFailed'; $detail = $_.Exception.Message }
+    finally { if ($reader) { $reader.Dispose() } }
+    return [pscustomobject]@{ Valid = $valid; Status = $status; Detail = $detail; InspectedLines = $lines; InspectedBytes = $bytes }
+}
+
+Export-ModuleMember -Function @('Test-WudTargetUpgradeTitle', 'ConvertTo-WudUpdateGuid', 'ConvertFrom-WudUpdateEventXml', 'Get-WudUpdateEventRecords', 'Get-WudArchivedUpdateEventRecords', 'Resolve-WudUpgradeIdentity', 'Test-WudUpgradeIdentityMatch', 'Update-WudUpgradeTracking', 'Get-WudWindowsUpdateConversionPlan', 'ConvertFrom-WudWindowsUpdateLogLine', 'Read-WudWindowsUpdateLogRecords', 'Test-WudDecodedWindowsUpdateLog')

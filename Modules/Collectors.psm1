@@ -595,26 +595,49 @@ function Invoke-WudWindowsUpdateLogDecode {
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $conversions = New-Object Collections.ArrayList
     foreach ($plan in @(Get-WudWindowsUpdateConversionPlan $Context)) {
-        $record = [pscustomobject]@{ Provider = 'Get-WindowsUpdateLog'; Source = 'CapturedSnapshot'; Origin = $plan.Name; InputRoot = $plan.InputRoot; Files = @($plan.Files | ForEach-Object { Get-WudRelativePath $Context.EvidencePath $_.FullName }); Output = Get-WudRelativePath $Context.EvidencePath $plan.LogPath; Status = 'NoCapturedInputs'; Error = $null }
+        $record = [pscustomobject]@{ Provider = 'Get-WindowsUpdateLog'; Source = 'CapturedSnapshot'; Origin = $plan.Name; InputRoot = $plan.InputRoot; Files = @($plan.Files | ForEach-Object { Get-WudRelativePath $Context.EvidencePath $_.FullName }); InputMappings = @(); Output = Get-WudRelativePath $Context.EvidencePath $plan.LogPath; Status = 'NoCapturedInputs'; ProcessStatus = $null; ExitCode = $null; OutputValidation = $null; StandardError = $null; StandardOut = $null; Error = $null }
         $null = $conversions.Add($record)
         if (-not $plan.Files.Count) { continue }
         # Owned scratch copies give rotated ETLs unique .etl names without
         # changing native evidence or mixing source-OS and current-OS streams.
         $scratch = New-WudDirectory (Join-Path $Context.RunPath ('DecodeScratch/' + [Guid]::NewGuid().ToString('N')))
         try {
-            $inputs = New-Object Collections.ArrayList; $index = 0
+            $inputs = New-Object Collections.ArrayList; $mappings = New-Object Collections.ArrayList; $index = 0
             foreach ($file in $plan.Files) {
-                $index++; $inputPath = Join-Path $scratch ('{0:D5}.etl' -f $index)
+                # Modern Get-WindowsUpdateLog checks WindowsUpdate filename
+                # filters even for explicitly supplied files. Generic 00001.etl
+                # is rejected with the misleading "ETL File not found" message.
+                $index++; $inputPath = Join-Path $scratch ('WindowsUpdate.{0:D5}.etl' -f $index)
                 Copy-Item -LiteralPath $file.FullName -Destination $inputPath -ErrorAction Stop
+                $copy = Get-Item -LiteralPath $inputPath -ErrorAction Stop
+                if ($copy.Length -ne $file.Length) { throw "Staged ETL length mismatch: $($file.FullName)" }
                 $null = $inputs.Add($inputPath)
+                $null = $mappings.Add([pscustomobject]@{ SourceRef = Get-WudRelativePath $Context.EvidencePath $file.FullName; StagedName = $copy.Name; Length = $copy.Length })
             }
+            $record.InputMappings = @($mappings)
             $inputsPath = Join-Path $scratch 'inputs.json'
             Write-WudJsonAtomic $inputsPath @($inputs)
             $escapedInputs = $inputsPath.Replace("'", "''"); $escaped = $plan.LogPath.Replace("'", "''")
-            $script = "`$etlFiles = Get-Content -LiteralPath '$escapedInputs' -Raw -Encoding UTF8 | ConvertFrom-Json; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null"
+            $script = "`$ErrorActionPreference = 'Stop'; try { [string[]]`$etlFiles = Get-Content -LiteralPath '$escapedInputs' -Raw -Encoding UTF8 | ConvertFrom-Json; foreach (`$etlFile in `$etlFiles) { if (-not (Test-Path -LiteralPath `$etlFile -PathType Leaf)) { throw ('Staged ETL missing before decoding: ' + `$etlFile) } }; Get-WindowsUpdateLog -ETLPath `$etlFiles -LogPath '$escaped' -ErrorAction Stop | Out-Null } catch { [Console]::Error.WriteLine((`$_ | Format-List * -Force | Out-String)); exit 1 }"
             $result = Invoke-WudProcess -Context $Context -FilePath $powerShell -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $script) -Name ('convert-windows-update-log-' + $plan.Name) -TimeoutSeconds ([int]$Context.Settings.timeoutsSeconds.windowsUpdateLog) -ExpectedArtifacts @($plan.LogPath)
-            $record.Status = $result.ExecutionStatus; $record.Error = $result.Detail
-            if (-not $result.Succeeded) { $null = Add-WudCollectionGap -Context $Context -Collector 'windows-update-decode' -Source $plan.InputRoot -Status $record.Status -Detail $result.Detail -Impact 'Material' }
+            $record.ProcessStatus = $result.ExecutionStatus; $record.ExitCode = Get-WudObjectPropertyValue $result 'ExitCode'
+            $record.Status = $result.ExecutionStatus
+            foreach ($streamName in @('StandardError', 'StandardOut')) {
+                $streamPath = Get-WudObjectPropertyValue $result $streamName
+                if ($streamPath) { $record.$streamName = Get-WudRelativePath $Context.EvidencePath $streamPath }
+            }
+            $record.OutputValidation = Test-WudDecodedWindowsUpdateLog -Path $plan.LogPath
+            if (-not $result.Succeeded) {
+                $record.Error = $result.Detail
+                $stderrPath = Get-WudObjectPropertyValue $result 'StandardError'
+                if ($stderrPath -and (Test-Path -LiteralPath $stderrPath)) {
+                    $errorReader = New-Object IO.StreamReader($stderrPath, [Text.Encoding]::UTF8, $true)
+                    try { $buffer = New-Object char[] 8192; $read = $errorReader.Read($buffer, 0, $buffer.Length); if ($read) { $record.Error += ' ' + (New-Object string($buffer, 0, $read)).Trim() } } finally { $errorReader.Dispose() }
+                }
+            } elseif (-not $record.OutputValidation.Valid) {
+                $record.Status = 'InvalidDecodedOutput'; $record.Error = $record.OutputValidation.Detail
+            }
+            if ($record.Error) { $null = Add-WudCollectionGap -Context $Context -Collector 'windows-update-decode' -Source $plan.InputRoot -Status $record.Status -Detail $record.Error -Impact 'Material' }
         } catch {
             $record.Status = 'Failed'; $record.Error = $_.Exception.Message
             $null = Add-WudCollectionGap -Context $Context -Collector 'windows-update-decode' -Source $plan.InputRoot -Status 'Failed' -Detail $record.Error -Impact 'Material'

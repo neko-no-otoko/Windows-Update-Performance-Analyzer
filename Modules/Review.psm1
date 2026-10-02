@@ -292,6 +292,7 @@ function Get-WudUpgradeTimingModel {
             if ($session.StartUtc) { $session.ElapsedSeconds = [Math]::Round((([DateTimeOffset]::Parse($session.EndUtc)) - ([DateTimeOffset]::Parse($session.StartUtc))).TotalSeconds, 3) }
         }
     }
+    foreach ($session in $sessions) { if (-not $session.EndUtc) { $session.Result = 'EndBoundaryNotRetained' } }
     $samples = @(if ($IncludeRecorderObservations) { (Read-WudJsonLines -Path (Join-Path $Context.EvidencePath 'Recorder/ProgressSamples.jsonl')).Records })
     $targetObservation = $null
     $lastBeforeTarget = $null
@@ -513,6 +514,7 @@ function Set-WudAttemptScope {
     elseif ($imagingPath -and ($imagingSemantics -or -not $wuOwnership)) { $classification = 'InitialDeploymentOrImaging'; $reason = 'The log is in Windows\\Panther and lacks the complete Windows Update feature-upgrade gate set.' }
     elseif ($imagingPath -or $imagingSemantics) { $classification = 'InitialDeploymentOrImaging'; $reason = 'The source path or log content directly identifies deployment/imaging context, which is excluded even when Windows Update text is also present.' }
     elseif ($included) { $classification = 'WindowsUpdateFeatureUpgrade' }
+    elseif (-not $parseComplete) { $classification = 'UnclassifiedSetupEvidence'; $reason = 'Setup scope parsing was incomplete. Partial ownership/build tokens cannot classify the whole log; raw evidence is retained for external review.' }
     elseif ($featureSemantics -and $nonWuOwner) { $classification = 'NonWindowsUpdateFeatureUpgrade'; $reason = 'The setup log directly names a non-Windows-Update deployment owner.' }
     elseif ($Attempt.SourcePath -match '(?i)/Raw/(?:Windows-CBS|Windows-DISM)/') { $classification = 'GeneralWindowsServicing'; $reason = 'The source is general servicing evidence, not a feature-upgrade setup source.' }
     else {
@@ -778,23 +780,40 @@ function Get-WudUpgradeStatusModel {
     }
 
     $featureRows = @($FeatureHistory)
-    $windowsUpdateConfirmed = @($EligibleAttempts).Count -gt 0 -or @($featureRows).Count -gt 0
+    $windowsUpdateConfirmed = @($EligibleAttempts).Count -gt 0 -or @($featureRows).Count -gt 0 -or @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @()).Count -gt 0
     $deploymentSource = if ($windowsUpdateConfirmed) { 'WindowsUpdateConfirmed' } else { 'Unattributed' }
     $rollbackMarker = Test-Path -LiteralPath (Join-Path $Context.RunPath 'State\Markers\post-rollback.marker')
-    $latestHistory = @($featureRows | Sort-Object DateUtc -Descending | Select-Object -First 1)
-    $failedHistory = @($latestHistory | Where-Object { (Get-WudOperationResultLabel $_.ResultCode) -in @('Failed', 'Aborted') })
-    $latestEvent = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object Boundary -in @('DownloadStarted', 'InstallStarted', 'InstallReportedSucceeded', 'InstallReportedFailed', 'DeploymentReportedSucceeded') | Sort-Object TimestampUtc -Descending | Select-Object -First 1)
+    # Compare terminal results from BOTH history and source events against starts.
+    # An archived start is not current activity when later history reported success.
+    # Conversely, older success must never hide a newer failure or retry.
+    $terminalResults = New-Object Collections.ArrayList
+    foreach ($entry in $featureRows) {
+        $resultLabel = Get-WudOperationResultLabel $entry.ResultCode
+        $terminalUtc = ConvertTo-WudReviewUtc (Get-WudReviewProperty $entry 'DateUtc')
+        if ([string]$entry.Operation -in @('1', 'Installation') -and $terminalUtc -and $resultLabel -in @('Succeeded', 'Failed', 'Aborted')) {
+            $null = $terminalResults.Add([pscustomobject]@{ TimestampUtc = $terminalUtc; Result = $resultLabel; SourceRef = Get-WudReviewProperty $entry 'SourceRef' })
+        }
+    }
+    foreach ($entry in @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @())) {
+        $terminalUtc = ConvertTo-WudReviewUtc (Get-WudReviewProperty $entry 'TimestampUtc')
+        if ($terminalUtc -and $entry.Boundary -in @('InstallReportedSucceeded', 'DeploymentReportedSucceeded', 'InstallReportedFailed')) {
+            $null = $terminalResults.Add([pscustomobject]@{ TimestampUtc = $terminalUtc; Result = if ($entry.Boundary -eq 'InstallReportedFailed') { 'Failed' } else { 'Succeeded' }; SourceRef = Get-WudReviewProperty $entry 'SourceRef' })
+        }
+    }
+    $latestTerminal = @($terminalResults | Sort-Object @{ Expression = { [DateTimeOffset]::Parse($_.TimestampUtc) }; Descending = $true }, @{ Expression = { $_.Result -ne 'Succeeded' }; Descending = $true } | Select-Object -First 1)
+    $latestEvent = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object { $_.Boundary -in @('DownloadStarted', 'DownloadCompleted', 'DownloadFailed', 'InstallStarted', 'InstallReportedSucceeded', 'InstallReportedFailed', 'DeploymentReportedSucceeded') -and (ConvertTo-WudReviewUtc (Get-WudReviewProperty $_ 'TimestampUtc')) } | Sort-Object @{ Expression = { [DateTimeOffset]::Parse($_.TimestampUtc) }; Descending = $true } | Select-Object -First 1)
     $targetInProgress = $latestEvent.Count -gt 0 -and $latestEvent[0].Boundary -in @('DownloadStarted', 'InstallStarted')
-    if ($failedHistory.Count -gt 0 -and $targetInProgress -and ([DateTimeOffset]::Parse($latestEvent[0].TimestampUtc)) -gt ([DateTimeOffset]::Parse($failedHistory[0].DateUtc))) { $failedHistory = @() }
+    if ($targetInProgress -and $latestTerminal.Count -gt 0 -and ([DateTimeOffset]::Parse($latestTerminal[0].TimestampUtc)) -ge ([DateTimeOffset]::Parse($latestEvent[0].TimestampUtc))) { $targetInProgress = $false }
+    $latestFailed = $latestTerminal.Count -gt 0 -and $latestTerminal[0].Result -in @('Failed', 'Aborted') -and -not $targetInProgress
     $lastRecorderState = if ($samples.Count -gt 0) { [string](Get-WudReviewProperty $samples[$samples.Count - 1] 'RecorderState') } else { $null }
     $reportedSuccessHistory = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedHistory' @() | Where-Object { [string]$_.Operation -in @('1', 'Installation') -and (Get-WudOperationResultLabel $_.ResultCode) -eq 'Succeeded' })
     $reportedSuccessLogs = @(Get-WudReviewProperty $Context.UpgradeTracking 'MatchedEvents' @() | Where-Object { $_.Boundary -in @('InstallReportedSucceeded', 'DeploymentReportedSucceeded') })
     $reportedSuccess = $reportedSuccessHistory.Count -gt 0 -or $reportedSuccessLogs.Count -gt 0
     $attemptOutcome = if ($rollbackMarker) { 'RolledBack' }
-        elseif ($targetPresent -and $buildTransition -eq 'Observed') { 'Succeeded' }
-        elseif ($failedHistory.Count -gt 0) { 'Failed' }
-        elseif ($targetInProgress -or (@($EligibleAttempts).Count -gt 0 -and $lastRecorderState -in @('SetupActive', 'SetupDownlevel', 'SetupSafeOS', 'SetupFirstBoot', 'SetupOOBE', 'RebootPending'))) { 'InProgress' }
-        elseif ($targetPresent -and $reportedSuccess) { 'WindowsUpdateReportedSucceeded' }
+        elseif ($latestFailed) { 'Failed' }
+        elseif ($targetPresent -and $buildTransition -eq 'Observed' -and -not $targetInProgress) { 'Succeeded' }
+        elseif (-not $targetPresent -and ($targetInProgress -or (@($EligibleAttempts).Count -gt 0 -and $lastRecorderState -in @('SetupActive', 'SetupDownlevel', 'SetupSafeOS', 'SetupFirstBoot', 'SetupOOBE', 'RebootPending')))) { 'InProgress' }
+        elseif ($targetPresent -and $latestTerminal.Count -gt 0 -and $latestTerminal[0].Result -eq 'Succeeded' -and -not $targetInProgress) { 'WindowsUpdateReportedSucceeded' }
         else { 'NotObserved' }
     $outcome = switch ($attemptOutcome) {
         'Succeeded' { 'Upgrade Succeeded' }
@@ -817,6 +836,8 @@ function Get-WudUpgradeStatusModel {
         TargetPresent = $targetPresent
         WindowsUpdateEvidenceConfirmed = $windowsUpdateConfirmed
         WindowsUpdateReportedSuccess = $reportedSuccess
+        LatestTargetResult = if ($latestTerminal.Count) { $latestTerminal[0] } else { $null }
+        UnclosedTargetStartRecorded = $targetInProgress
         SuccessEvidence = @($reportedSuccessHistory | ForEach-Object { [pscustomobject]@{ TimestampUtc = $_.DateUtc; SourceRef = $_.SourceRef; Meaning = 'Installation-operation history reported success, not an exact phase boundary.' } }) + @($reportedSuccessLogs | ForEach-Object { [pscustomobject]@{ TimestampUtc = $_.TimestampUtc; SourceRef = $_.SourceRef; Meaning = 'Exact-identity source record reported success; query time is not necessarily completion time.' } })
         ObservedBuilds = @($observedBuilds)
     }

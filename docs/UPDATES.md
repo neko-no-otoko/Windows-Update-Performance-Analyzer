@@ -4,6 +4,14 @@ WUPA 3.2 still ships as one architecture-specific portable EXE, with an embedded
 
 ## Operator workflow
 
+### 3.2.2 collector patch
+
+This patch changes collector/report behavior, not the updater shell. Its minimum GUI remains 3.2.1: a 3.2.1 GUI can download the signed engine ZIP and will display **WUPA 3.2.1 - engine 3.2.2**. A new EXE is also built for fresh deployments. The original/network-share EXE is not overwritten.
+
+After applying the engine, an already-upgraded device can use **Create report from existing logs** to capture and decode retained evidence again. For an older active tracking run, explicitly approve **Apply engine 3.2.2 to this active run** and wait for restart verification; do not finalize a still-running Windows upgrade merely to update WUPA. Existing raw captures are retained.
+
+The patch repairs decoder filename filtering, rejects write-access-only output, preserves known decoder exit failures, recognizes the operational download-completion event, and reconciles later history results with historical starts. Installation/reboot elapsed values remain unavailable when no matching exact boundary was retained. Windows CI runs PowerShell 5.1 fixtures, native module input enumeration, GUI rendering and portable startup checks before publication; these are not a full feature upgrade or a real-device ETL decode. See the release notes for validation scope.
+
 ### Testing the 3.2.0 to 3.2.1 update
 
 1. Open your existing 3.2.0 EXE elevated and click **Check for updates**. After it finds 3.2.1, click **Update available: 3.2.1 — apply update**.

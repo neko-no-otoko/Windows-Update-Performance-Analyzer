@@ -67,7 +67,7 @@ try {
         function script:Get-WindowsUpdateLog {
             param([string[]]$ETLPath, [string]$LogPath, $ErrorAction)
             if (-not $ETLPath.Count) { throw 'Decoder received no paths.' }
-            foreach ($inputPath in $ETLPath) { if (-not (Test-Path -LiteralPath $inputPath) -or [IO.Path]::GetExtension($inputPath) -ne '.etl') { throw 'A rotated or nested JSON input was not normalized to an actual .etl file.' } }
+            foreach ($inputPath in $ETLPath) { if (-not (Test-Path -LiteralPath $inputPath) -or [IO.Path]::GetFileName($inputPath) -notlike 'WindowsUpdate*.etl') { throw 'A staged input must exist and satisfy the modern WindowsUpdate filename filter.' } }
             $null = $script:DecodeCalls.Add([pscustomobject]@{ Count = $ETLPath.Count; LogPath = $LogPath })
             # Do not overwrite the real retained-log fixture used below.
         }

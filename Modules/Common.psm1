@@ -425,7 +425,9 @@ function Invoke-WudProcess {
         elseif ($null -eq $exitCode) { 'ExitCodeUnavailable' }
         elseif ($succeeded) { 'Succeeded' }
         else { 'ExitedNonzero' }
-    if ($executionStatus -ne 'Succeeded' -and $artifactsCaptured) { $executionStatus = 'ArtifactCapturedDespiteProcessUncertainty' }
+    # Changed output cannot erase a known failure or timeout. The WU decoder
+    # creates a write-access probe before validating its input filenames.
+    if ($executionStatus -eq 'ExitCodeUnavailable' -and $artifactsCaptured) { $executionStatus = 'ArtifactCapturedDespiteProcessUncertainty' }
     $detail = switch ($executionStatus) {
         'Succeeded' { 'Process completed with an accepted exit code.' }
         'TimedOut' { "Process exceeded its $TimeoutSeconds second limit." }

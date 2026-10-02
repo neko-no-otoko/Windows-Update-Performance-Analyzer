@@ -25,7 +25,7 @@ try {
     Assert-Upgrade (Test-WudTargetUpgradeTitle 'KB5054156: Feature update to Windows 11, version 25H2 by using an enablement package') 'Documented enablement package is accepted'
     $events = @(
         (New-UpdateEvent 44 '2026-10-01T10:00:00Z' -RecordId 1),
-        (New-UpdateEvent 17 '2026-10-01T10:03:00Z' -Keywords '0x8000000000004004' -RecordId 2),
+        (New-UpdateEvent 41 '2026-10-01T10:03:00Z' -Keywords '0x4000000000000014' -RecordId 2),
         (New-UpdateEvent 43 '2026-10-01T10:04:00Z' -Keywords '0x8000000000002008' -RecordId 3),
         (New-UpdateEvent 20 '2026-10-01T10:05:00Z' -Keywords '0x8000000000008008' -RecordId 4),
         (New-UpdateEvent 43 '2026-10-01T10:07:00Z' -Keywords '0x8000000000002008' -RecordId 5),
@@ -78,7 +78,7 @@ try {
     $history = @([pscustomobject]@{ Date = '2026-10-01T10:10:00Z'; Title = $events[6].Title; UpdateID = $events[6].UpdateID; RevisionNumber = 101; Operation = '1'; ResultCode = '4' })
     $securityEvents = @(
         (New-UpdateEvent 44 '2026-10-01T10:01:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -RecordId 8),
-        (New-UpdateEvent 17 '2026-10-01T10:02:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -Keywords '0x8000000000004004' -RecordId 9),
+        (New-UpdateEvent 41 '2026-10-01T10:02:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -Keywords '0x4000000000000014' -RecordId 9),
         (New-UpdateEvent 43 '2026-10-01T10:03:00Z' -Title $events[6].Title -Guid $events[6].UpdateID -Keywords '0x8000000000002008' -RecordId 10)
     )
     foreach ($event in $securityEvents) { Write-WudJsonLine -Path (Join-Path $recorder 'UpdateEvents.jsonl') -InputObject $event -Depth 12 }
@@ -110,6 +110,9 @@ try {
     $truncatedProfile.ParseTruncated = $true
     $truncatedProfile = Set-WudAttemptScope $context $truncatedProfile @() $context.Inventory['Identity']
     Assert-Upgrade (-not $truncatedProfile.IncludedForUpgradeReview) 'A truncated scope parse cannot prove the remainder is uncontaminated'
+    $truncatedProfile.ContentSignals += 'NonWindowsUpdateOwnerInSetupLog'
+    $truncatedProfile = Set-WudAttemptScope $context $truncatedProfile @() $context.Inventory['Identity']
+    Assert-Upgrade ($truncatedProfile.Classification -eq 'UnclassifiedSetupEvidence' -and -not $truncatedProfile.IncludedForUpgradeReview) 'A truncated mixed-owner log stays unclassified rather than making a whole-log ownership assertion'
     $foreignPath = Join-Path $context.SnapshotPath 'Raw/WindowsBT-Panther/setupact_1.log'
     Write-WudText -Path $foreignPath -Text '2026-10-01T10:04:00Z MOUPG Windows Update target OS build 26100 UpdateID=cccccccc-cccc-cccc-cccc-cccccccccccc'
     $foreign = Set-WudAttemptScope $context (Get-WudSetupLogProfile $context (Get-Item $foreignPath) 2) @() $context.Inventory['Identity']

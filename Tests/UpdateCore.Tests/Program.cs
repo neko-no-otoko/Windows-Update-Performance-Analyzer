@@ -30,6 +30,17 @@ if (args.Length == 4 && args[0] == "--probe-published-update")
     Console.WriteLine("PASS: production updater discovered the public signed release, selected the required GUI replacement, downloaded and verified its exact EXE. " + available.Manifest.ReleaseVersion);
     return;
 }
+if (args.Length == 4 && args[0] == "--probe-published-engine")
+{
+    using var publisher = new UpdateCore(File.ReadAllText(args[3]));
+    var available = await publisher.CheckAsync(args[1]) ?? throw new Exception("No newer stable authenticated release was found.");
+    if (UpdateCore.ParseVersion(available.Manifest.MinimumAppVersion) > UpdateCore.ParseVersion(args[1])) throw new Exception("This test expects the compatible engine-only update path.");
+    var runtime = await publisher.InstallEngineAsync(available, args[2]);
+    var cached = publisher.FindInstalledEngine(args[2], args[1], args[1]) ?? throw new Exception("The newly installed engine could not be authenticated from its cache receipt.");
+    if (cached.Update.Manifest.EngineVersion != available.Manifest.EngineVersion || !Directory.Exists(runtime)) throw new Exception("Installed/cache engine version does not match the public release.");
+    Console.WriteLine("PASS: production updater discovered the public signed release, downloaded/verified/installed its compatible engine, and authenticated the offline cache. " + available.Manifest.ReleaseVersion);
+    return;
+}
 if (args.Length == 3 && args[0] == "--verify-release")
 {
     using var publisher = new UpdateCore(File.ReadAllText(args[2]));

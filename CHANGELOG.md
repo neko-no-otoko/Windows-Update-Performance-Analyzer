@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.2 - 2026-10-02
+
+- Keep decoder-compatible WindowsUpdate-prefixed names for staged and rotated ETLs; check all input files inside the child process and retain original-to-staged mappings. Raw evidence remains unchanged.
+- Preserve known process failures/timeouts even when they create an output file. Include decoder stderr and validate diagnostic content; the 23-byte write-access probe is never accepted as converted evidence or labeled Parsed.
+- Correct the download completion keyword mask for WindowsUpdateClient event 41. Recover matching archived download intervals without substituting history timestamps for installation/reboot boundaries.
+- Reconcile target starts with later history/source terminal results. Concurrent driver updates remain separate, old successes do not hide newer target retries/failures, and an unclosed historical start alone does not label a target-OS device Upgrade In Progress.
+- Keep partially parsed mixed-owner Panther logs unclassified instead of asserting whole-log non-Windows-Update ownership. Preserve imaging exclusions and attribution gates.
+- Add sanitized decoder/status regression tests, real child-process error tests, an optional local-only capture replay, native Windows module input-enumeration checks, and a production public-release engine/cache verification probe. Fixture validation does not claim a full Windows feature-upgrade test; see release notes for completed validation scope.
+
 ## 3.2.1 — 2026-10-01
 
 - Decode staged current and Windows.old Windows Update ETLs separately, including rotated ETLs using unique scratch names. Record conversion inputs/results; original evidence is untouched.

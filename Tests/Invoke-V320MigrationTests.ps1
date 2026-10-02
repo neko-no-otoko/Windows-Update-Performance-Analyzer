@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidateSet('3.1.1', '3.2.0')][string]$PreviousEngine = '3.1.1')
+param([ValidateSet('3.1.1', '3.2.0', '3.2.1')][string]$PreviousEngine = '3.1.1')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $toolRoot = Split-Path -Parent $PSScriptRoot
@@ -10,7 +10,7 @@ $oldData = $env:ProgramData; $oldRoot = $env:SystemRoot
 try {
     $env:ProgramData = New-WudDirectory $fixture
     $env:SystemRoot = New-WudDirectory (Join-Path $fixture 'fake-windows')
-    $runtime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) 'Runtime/3.2.1')
+    $runtime = New-WudDirectory (Join-Path (Get-WudProgramDataRoot) 'Runtime/3.2.2')
     Copy-Item (Join-Path $toolRoot 'Data') $runtime -Recurse
     Copy-Item (Join-Path $toolRoot 'VERSION') $runtime
     $module = Get-Module RuntimeUpdate
@@ -31,7 +31,7 @@ try {
         function script:Stop-WudRecorderTask { param($State) return [pscustomobject]@{ Status = 'Stopped'; Error = $null } }
         function script:Start-WudRecorderTask {
             param($State)
-            if ($script:FailRestart -and $State.ToolVersion -eq '3.2.1') { return [pscustomobject]@{ Status = 'StartUnverified'; Error = 'Injected restart failure.' } }
+            if ($script:FailRestart -and $State.ToolVersion -eq '3.2.2') { return [pscustomobject]@{ Status = 'StartUnverified'; Error = 'Injected restart failure.' } }
             return [pscustomobject]@{ Status = 'Started'; Error = $null }
         }
     }
@@ -74,7 +74,7 @@ try {
             if ($scenario -eq 'PendingNewState') {
                 & $module { param($s, $r) Set-WudOwnedTaskRuntime (Get-WudOwnedTaskXml $s Recorder) $r } $state $runtime
                 $changedState = ConvertFrom-WudJsonText ($state | ConvertTo-Json -Depth 40)
-                $changedState.ToolVersion = '3.2.1'; $changedState.RuntimePath = $runtime
+                $changedState.ToolVersion = '3.2.2'; $changedState.RuntimePath = $runtime
                 Write-WudJsonAtomic (Join-Path (Get-WudProgramDataRoot) 'ActiveRun.json') $changedState
                 Write-WudJsonAtomic $state.StatePath $changedState
             }
@@ -88,7 +88,7 @@ try {
         $current = Get-WudActiveRunState
         $tasks = & $module { return $script:Tasks.Clone() }
         if ($scenario -in @('Success', 'PendingRecovery', 'PendingNewState')) {
-            Assert-Migration320 (-not $failed -and $current.ToolVersion -eq '3.2.1' -and $current.RuntimePath -eq $runtime) "$scenario migrates the existing state rather than creating a new run"
+            Assert-Migration320 (-not $failed -and $current.ToolVersion -eq '3.2.2' -and $current.RuntimePath -eq $runtime) "$scenario migrates the existing state rather than creating a new run"
             Assert-Migration320 ($tasks["Resume-$scenario"].Contains($runtime) -and $tasks["Recorder-$scenario"].Contains($runtime)) "$scenario updates both owned task actions"
             Assert-Migration320 ($tasks["Resume-$scenario"].Contains('<BootTrigger>')) "$scenario preserves existing task triggers"
             $journal = Read-WudJson $current.RuntimeUpdateJournal
