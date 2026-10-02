@@ -135,7 +135,7 @@ if ((Test-WudIsWindows) -and $PSVersionTable.PSVersion.Major -eq 5) {
         $enumerate = $definitions[0].Body.GetScriptBlock()
         $parameterNames = @($definitions[0].Body.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         $parameters = @{ Paths = @($path) }
-        if ($parameterNames -contains 'ETLFileNameFilter') { $parameters.ETLFileNameFilter = @('WindowsUpdate*.etl') }
+        if ($parameterNames -contains 'ETLFileNameFilter') { $parameters.ETLFileNameFilter = @('WindowsUpdate.*\.etl$') }
         if ($parameterNames -contains 'ProviderFilter') { $parameters.ProviderFilter = @('WUTraceLogging') }
         & $enumerate @parameters
     } $nativeInput
